@@ -544,26 +544,54 @@ function runKbCheckProcess(python, script, kbRoot) {
     }
   })
 
-  // ---- KB-first 硬拦截 hook：tools/pre-execute 在工具调用前拦截全局搜索 ----
-  // 确定性工具名匹配（不是猜用户意图）：模型要调用全局搜索工具（bash 全局 grep /
-  // web_search / web_fetch / codegraph / read）时先拦下，强制先 grep 知识库。
-  // kbRoot 动态解析（KB_ROOT 环境变量优先，默认 ~/.local-kb），跨设备不用写死路径。
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    const tool = exec.name
-    if (!['bash', 'web_search', 'web_fetch', 'codegraph', 'read'].includes(tool)) return next()
-    if (tool === 'bash') {
-      const cmd = typeof exec.arguments?.command === 'string' ? exec.arguments.command : ''
-      // 查 KB 本身 → 放行（含 kbRoot 绝对路径或 ~/.local-kb 缩写）
-      if (cmd.includes(kbRoot) || /\.local-kb/.test(cmd)) return next()
-      // 全局搜索型命令（grep/rg/find/cat/sed/head/tail/ls）→ 拦
-      if (/\b(grep|rg|find|cat|sed|head|tail|ls)\b/.test(cmd)) {
-        return { kind: 'deny', reason: '先查知识库：grep ' + kbRoot + '/projects/*/*.md 与 docs/；KB 未命中才能搜索源项目' }
+  // ---- KB-first 门禁 hook：tools/pre-execute ----
+  // 状态机（取代字符串白名单）：grep KB / read KB 内文件 → 解锁全局搜索，窗口 =
+  // KB_GATE_STEPS 次搜索或 KB_GATE_TTL_MS 毫秒，耗尽强制重查；定点命令（ls/cat/
+  // git/curl…）与写入工具不拦；DSH_LOCAL_KB_ENFORCE=0 逃生门。
+  // 设计全文与取舍（含旧实现缺陷、防绕动机、放行清单）见 local-kb 记忆
+  // 「kb-first-gate-state-machine.md」。
+  {
+    const KB_GATE_STEPS = 12
+    const KB_GATE_TTL_MS = 15 * 60 * 1000
+    const gate = { checkedAt: 0, calls: 0 }   // 进程生命周期内的单例状态
+    const isKbGrep = (cmd) => /\b(grep|rg|find)\b/.test(cmd) && cmd.includes(kbRoot)
+    const unlocked = () => gate.checkedAt > 0 && Date.now() - gate.checkedAt < KB_GATE_TTL_MS && gate.calls < KB_GATE_STEPS
+    const kbDeny = (act) => ({ kind: 'deny', reason: '先查知识库：grep -rn "<关键词>" ' + kbRoot + '/projects/*/*.md ' + kbRoot + '/docs/ 或 read KB 内文件；KB 未命中才能' + act + '。查过 KB 后本窗口自动放行' })
+
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      const tool = exec.name
+      if (!['bash', 'read', 'web_search', 'web_fetch', 'codegraph'].includes(tool)) return next()
+      if (process.env.DSH_LOCAL_KB_ENFORCE === '0') return next()
+
+      if (tool === 'bash') {
+        const cmd = typeof exec.arguments?.command === 'string' ? exec.arguments.command : ''
+        // 查 KB 本身 → 放行；若是 grep KB 则刷新解锁窗口
+        if (cmd.includes(kbRoot) || /\.local-kb/.test(cmd)) {
+          if (isKbGrep(cmd)) { gate.checkedAt = Date.now(); gate.calls = 0 }
+          return next()
+        }
+        // 全局搜索型命令 → 受窗口约束；其余具名命令视为定点访问，不拦
+        if (/\b(grep|rg|find)\b/.test(cmd)) {
+          if (unlocked()) { gate.calls += 1; return next() }
+          return kbDeny('搜索源项目')
+        }
+        return next()
       }
-      return next()
-    }
-    // web_search / web_fetch / codegraph / read → 拦（这些必然全局搜索）
-    return { kind: 'deny', reason: '先查知识库：grep ' + kbRoot + '/projects/*/*.md 与 docs/；KB 未命中才能搜索源项目或网络' }
-  }, { prepend: true })
+      if (tool === 'read') {
+        const filePath = typeof exec.arguments?.file_path === 'string' ? exec.arguments.file_path : ''
+        // read KB 内文件 = 查 KB，刷新窗口
+        if (filePath.includes(kbRoot) || /\.local-kb/.test(filePath)) {
+          gate.checkedAt = Date.now(); gate.calls = 0
+          return next()
+        }
+        if (unlocked()) { gate.calls += 1; return next() }
+        return kbDeny('读源码')
+      }
+      // web_search / web_fetch / codegraph：必然型外搜，受同一窗口约束
+      if (unlocked()) { gate.calls += 1; return next() }
+      return kbDeny('搜索源项目或网络')
+    }, { prepend: true })
+  }
 
   // ---- 设置页 HTTP API（静态插件的 Client↔Host 通道：webServer 路由 + fetch） ----
   ctx.inject(['webServer'], (scope) => {
