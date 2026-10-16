@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Knowledge Base",
+    "description": "Installs the local-kb skill and its always-on rules, auto WebDAV sync on KB writes, settings-page management; hooks auto-clean on uninstall while credentials/skill copy/rules block stay for manual removal"
+  }
+}

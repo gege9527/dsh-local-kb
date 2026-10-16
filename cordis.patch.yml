@@ -1,0 +1,7 @@
+# dsh-local-kb bundle patch: one row, inserted over whatever layers came before it.
+# 知识库插件：技能安装 + 常驻规范 + 写入即同步 hook + 设置页 + WebDAV 配置。
+
+- insert:
+    - id: local-kb
+      name: dsh-local-kb
+      config: {}

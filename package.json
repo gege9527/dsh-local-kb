@@ -1,0 +1,54 @@
+{
+  "name": "dsh-local-kb",
+  "version": "0.1.1",
+  "description": "知识库插件：自动安装 local-kb 技能与常驻规范、写入即自动 WebDAV 同步、设置页管理",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "knowledge-base",
+    "local-kb",
+    "webdav",
+    "sync"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "remote",
+        "remote.credentials"
+      ]
+    }
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "install-skill.js",
+    "client.js",
+    "skill/",
+    "cordis.patch.yml",
+    "locale/",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  }
+}

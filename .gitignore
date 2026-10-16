@@ -1,0 +1,27 @@
+# deps / build
+node_modules/
+dist/
+*.tgz
+
+# logs
+*.log
+npm-debug.log*
+
+# env & secrets (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+credentials*.yaml
+.credentials.yaml
+*.secret
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
