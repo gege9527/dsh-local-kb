@@ -18,6 +18,8 @@
   排除 `.DS_Store`/`._*`/`*.tmp`/`Thumbs.db`/状态文件。
 - **同步状态分片**：`$DSH_HOME/local-kb/state/<hash>/` 按目录分片，只写变化的那片；
   旧 `.kb-sync-state.json` 只读迁移、不删除。
+- **长对话提醒**：上下文用到 60%（`reminderPressure` 可配）时提醒一次
+  「把值得长期留的写进 KB」，每会话一次；拿不到 `tokenMeter` 或窗口时不出声。
 - **知识库概览 API 与设置页卡片**：项目数、记忆条数、索引行数、文档数、缺路径标记。
 - **体检结构化**：`kb-check.py --json`，设置页显示统计与前 3 条警告。
 - **卸载**：`node install-skill.js --uninstall`，移除技能副本与 AGENTS.md 的 KB_LOCAL 块，

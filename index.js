@@ -937,6 +937,39 @@ export function apply(ctx, config = {}) {
     })
   }
 
+  // ---- 长对话提醒：把值得留的先写进 KB（每会话一次） ----
+  if (config.compactionReminder !== false) {
+    const pressure = {}
+    for (const name of ['tokenMeter', 'sessionProjections']) {
+      ctx.inject([name], (inner) => {
+        inner.effect(() => {
+          const service = inner[name]
+          pressure[name] = service
+          return () => {
+            if (pressure[name] === service) delete pressure[name]
+          }
+        })
+      })
+    }
+    const reminder = createCompactionReminder(pressure, config.reminderPressure)
+    ctx.inject(['systemPrompt'], (inner) => {
+      const prompt = inner.systemPrompt
+      if (typeof prompt?.context !== 'function') return
+      inner.effect(() => prompt.context({
+        name: 'local-kb:compaction',
+        order: 302,
+        interpolate: false,
+        text: (context) => {
+          try {
+            return reminder(context)
+          } catch {
+            return ''
+          }
+        },
+      }))
+    })
+  }
+
   // ---- 写入即同步 hook：tools/result 监听（核心） ----
   const syncState = new SyncState(kbRoot, dshHome)
   let syncChain = syncState.ready.then(() => {}) // 串行化：同一时刻最多一个同步任务
@@ -1489,6 +1522,44 @@ async function skillInstalled(dshHome) {
     return true
   } catch {
     return false
+  }
+}
+
+/* =========================================================================
+ * 长对话提醒（最小版）
+ * -------------------------------------------------------------------------
+ * 不算 dsh 的压缩触发点（那要复制 compaction 的阈值推导，跨版本易碎）。
+ * 只用 tokenMeter 的 totalTokens 与 contextPressure 的窗口算比例，过线提醒一次。
+ * 目的是「别把该写的攒到压缩前」，不是精确预测压缩。
+ * ======================================================================= */
+export const REMINDER_PRESSURE = 0.6
+export const COMPACTION_REMINDER_TEXT =
+  '对话已经很长（约 60% 上下文窗口）。趁还没被压缩，把这次任务里值得长期保留的结论写进知识库：' +
+  '一条事实一个文件，指针进对应的 MEMORY.md。只写长期有用的，过程细节不要写。'
+
+/**
+ * 返回一个 context.text 函数：同一 session 只提醒一次（WeakSet 随 session 回收）。
+ * 拿不到 tokenMeter、上下文窗口或 session 时一律不提醒 —— 宁可漏，不制造噪音。
+ */
+export function createCompactionReminder(pressure = {}, threshold = REMINDER_PRESSURE) {
+  const reminded = new WeakSet()
+  const ratio = Number.isFinite(threshold) && threshold > 0 && threshold <= 1 ? threshold : REMINDER_PRESSURE
+  return (context) => {
+    const session = context?.agent?.session
+    if (session === null || typeof session !== 'object') return ''
+    if (reminded.has(session)) return ''
+    let tokens
+    let window
+    try {
+      tokens = pressure.tokenMeter?.measure?.(session)?.totalTokens
+      window = pressure.sessionProjections?.stateOf?.(session, 'contextPressure')?.contextWindow
+    } catch {
+      return ''
+    }
+    if (!Number.isFinite(tokens) || !Number.isInteger(window) || window <= 0) return ''
+    if (tokens / window < ratio) return ''
+    reminded.add(session)
+    return COMPACTION_REMINDER_TEXT
   }
 }
 
