@@ -286,6 +286,66 @@ export function indexCapGuard(kbRoot) {
 }
 
 /* =========================================================================
+ * 禁止 AI 删除知识库内容
+ * -------------------------------------------------------------------------
+ * 规则：删除只由用户做。AI 只能「归档」——把笔记移进同目录的 archive/。
+ * 这里拦的是 AI 通过 bash 删除：rm / unlink / shred / truncate / find -delete，
+ * 以及把文件移出 KB（mv 出界等价于删除）。KB 内部的 mv（进 archive/）放行。
+ * ======================================================================= */
+const BASH_DELETE_PATTERN = /\b(?:rm|rmdir|unlink|shred|truncate)\b|(?:^|\s)-delete\b/
+
+const deleteRefusal = (rel) => `知识库内容只归档不删除：${rel} 不能删。` +
+  `把笔记移到同目录的 archive/（例：memory/archive/2026-11-02-<slug>.md）再改索引；` +
+ `物理删除只能由用户在文件管理器里做。`
+
+/** 判定一次删除类操作；返回拒绝理由，undefined = 放行。 */
+export function judgeKbDelete(kbRoot, tool, args) {
+  if (tool !== 'bash' || typeof args?.command !== 'string') return undefined
+  const cmd = args.command
+  if (cmd === '' || cmd.length > 8192) return undefined
+  const hasDelete = BASH_DELETE_PATTERN.test(cmd)
+  const hasMove = /\bmv\b/.test(cmd)
+  if (!hasDelete && !hasMove) return undefined
+
+  const inKb = (p) => {
+    const { kind } = classifyPath(kbRoot, p)
+    return kind !== 'outside' && kind !== 'unknown'
+  }
+  const tokens = commandPathTokens(cmd).map((t) => expandHome(t))
+  const hit = tokens.filter(inKb)
+  const workdir = typeof args?.workdir === 'string' ? args.workdir.trim() : ''
+  const workdirHit = workdir !== '' && inKb(expandHome(workdir))
+
+  if (hasDelete) {
+    if (hit.length > 0) return deleteRefusal(classifyPath(kbRoot, hit[0]).rel ?? hit[0])
+    if (workdirHit) return deleteRefusal(classifyPath(kbRoot, expandHome(workdir)).rel ?? workdir)
+    // 变量拼出来的路径判不出：命令里出现 KB 文本就按命中处理（保持旧行为的兜底）
+    if (cmd.includes(kbRoot)) return deleteRefusal(kbRoot)
+    return undefined
+  }
+
+  // 纯 mv：源在 KB、目标不在 KB = 移出知识库
+  if (tokens.length < 2) return undefined
+  const src = tokens[0]
+  const dst = tokens[tokens.length - 1]
+  if (inKb(src) && !inKb(dst)) return deleteRefusal(classifyPath(kbRoot, src).rel ?? src)
+  return undefined
+}
+
+/** 组合 guard：删除判定在前，索引上限在后（indexCap:false 可单独关上限）。 */
+export function kbGuard(kbRoot, { indexCap = true } = {}) {
+  return (exec) => {
+    try {
+      const remove = judgeKbDelete(kbRoot, exec?.name, exec?.arguments)
+      if (remove !== undefined) return remove
+      return indexCap ? judgeIndexWrite(kbRoot, exec?.name, exec?.arguments) : undefined
+    } catch {
+      return undefined // 判不动就放行：宁可漏，不可误拒
+    }
+  }
+}
+
+/* =========================================================================
  * 同步状态（内存单例 + 磁盘备份，设置页可查）
  * ======================================================================= */
 class SyncState {
@@ -590,8 +650,8 @@ export function apply(ctx, config = {}) {
   // ---- 记忆索引硬上限：ctx.tools.guard（同步、单调拒绝） ----
   // 200 行 / 25KB 之前只写在 AGENTS.md 和 kb-check.py 里，模型写超了也能落盘。
   // guard 在写入前同步判定，只拦「越界且变大」，压缩写入照常放行。
-  if (config.indexCap !== false && typeof ctx.tools?.guard === 'function') {
-    ctx.tools.guard(indexCapGuard(kbRoot))
+  if (typeof ctx.tools?.guard === 'function') {
+    ctx.tools.guard(kbGuard(kbRoot, { indexCap: config.indexCap !== false }))
   }
 
   // ---- 写入即同步 hook：tools/result 监听（核心） ----

@@ -85,7 +85,8 @@ let captured2
 const ctx2 = mkCtx()
 ctx2.tools = { guard: (fn) => { captured2 = fn } }
 apply(ctx2, { kbRoot: root, installSkill: false, registerSkill: false, indexCap: false })
-check('indexCap:false 不注册 guard', captured2, undefined)
+check('indexCap:false 仍注册 guard（删除拦截照常）', typeof captured2, 'function')
+check('indexCap:false 时超限写入放行', captured2({ name: 'write', arguments: write(line(201)) }), undefined)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
