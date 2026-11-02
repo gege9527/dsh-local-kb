@@ -15,8 +15,7 @@
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
 import { randomUUID } from 'node:crypto'
-import { constants as FS, realpathSync } from 'node:fs'
-import { readFileSync } from 'node:fs'
+import { constants as FS, readFileSync, realpathSync, statSync } from 'node:fs'
 import { access, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
@@ -184,6 +183,106 @@ export function bashWritesKb(kbRoot, args) {
   }
   // 变量拼出来的路径判不出（如 $KB/memory）：退回到文本包含，保持旧行为的下限
   return cmd.includes(kbRoot)
+}
+
+/* =========================================================================
+ * 记忆索引上限：确定性拒绝（不是提醒）
+ * -------------------------------------------------------------------------
+ * 与 skill/tools/kb-check.py 同一组数字：软 150 行/20KB 只警告，硬 200 行/25KB 拒绝。
+ * 只拒绝「越界且比现在变大」的写入 —— 压缩（213 → 205 → 198）一路放行，
+ * 否则索引一旦超限就再也改不动。
+ * ======================================================================= */
+export const INDEX_HARD_LINES = 200
+export const INDEX_HARD_BYTES = 25 * 1024
+/** guard 在主线程同步跑：索引再大也只读这么多，超过就只按字节比较。 */
+const INDEX_READ_LIMIT = 1024 * 1024
+
+const indexLines = (text) => text.split('\n').length
+const indexBytes = (text) => Buffer.byteLength(text, 'utf8')
+
+/** 读当前索引；不存在返回空，非常规文件或过大返回只带字节的占位。 */
+function readIndexForGuard(file) {
+  try {
+    const st = statSync(file)
+    if (!st.isFile()) return { unreadable: true, lines: undefined, bytes: 0, text: '' }
+    if (st.size > INDEX_READ_LIMIT) return { tooBig: true, lines: undefined, bytes: st.size, text: '' }
+    const text = readFileSync(file, 'utf8')
+    return { lines: indexLines(text), bytes: indexBytes(text), text }
+  } catch {
+    return { lines: 0, bytes: 0, text: '' } // 还没创建
+  }
+}
+
+/**
+ * 按会写入后的样子算出索引文本；算不出（参数不认识、匹配不到）返回 undefined = 放行。
+ * 只认会改动索引的工具：write / edit / str_replace_editor 的 create、str_replace、insert。
+ */
+function predictIndexText(tool, args, current) {
+  const base = current.text ?? ''
+  const lf = (s) => String(s).replace(/\r\n/g, '\n')
+  if (tool === 'write' && typeof args.content === 'string') return args.content
+  if (tool === 'str_replace_editor' && args.command === 'create' && typeof args.file_text === 'string') {
+    return args.file_text
+  }
+  const oldStr = typeof args.old_string === 'string' ? args.old_string
+    : typeof args.old_str === 'string' ? args.old_str : undefined
+  const newStr = typeof args.new_string === 'string' ? args.new_string
+    : typeof args.new_str === 'string' ? args.new_str : undefined
+  if ((tool === 'edit' || tool === 'str_replace' || tool === 'str_replace_editor') && oldStr !== undefined && newStr !== undefined) {
+    const text = lf(base)
+    const needle = lf(oldStr)
+    if (needle === '' || !text.includes(needle)) return undefined
+    const replacement = lf(newStr)
+    return args.replace_all === true
+      ? text.split(needle).join(replacement)
+      : text.replace(needle, () => replacement)
+  }
+  if (tool === 'str_replace_editor' && args.command === 'insert' && typeof args.new_str === 'string') {
+    const line = Number.isInteger(args.insert_line) ? args.insert_line : undefined
+    if (line === undefined) return undefined
+    const lines = lf(base).split('\n')
+    const at = Math.max(0, Math.min(line, lines.length))
+    return [...lines.slice(0, at), ...lf(args.new_str).split('\n'), ...lines.slice(at)].join('\n')
+  }
+  return undefined
+}
+
+/** 判定一次索引写入；返回拒绝理由，undefined = 放行。 */
+export function judgeIndexWrite(kbRoot, tool, args) {
+  if (!args || typeof args !== 'object') return undefined
+  const target = typeof args.file_path === 'string' ? args.file_path
+    : typeof args.path === 'string' ? args.path : undefined
+  if (target === undefined) return undefined
+  const cls = classifyPath(kbRoot, expandHome(target))
+  if (cls.kind !== 'memory-index') return undefined
+
+  const current = readIndexForGuard(cls.path)
+  const nextText = predictIndexText(tool, args, current)
+  if (nextText === undefined) return undefined
+
+  const lines = indexLines(nextText)
+  const bytes = indexBytes(nextText)
+  // 行数或字节各自独立判：只拦住「既越界又在变大」的那一项。
+  const grewLines = current.lines === undefined ? false : lines > current.lines
+  const grewBytes = bytes > current.bytes
+  const overLines = current.lines !== undefined && lines > INDEX_HARD_LINES && grewLines
+  const overBytes = bytes > INDEX_HARD_BYTES && grewBytes
+  if (!overLines && !overBytes) return undefined
+
+  const over = overLines ? `${lines} 行（上限 ${INDEX_HARD_LINES}）` : `${bytes} B（上限 ${INDEX_HARD_BYTES}）`
+  return `记忆索引 ${cls.rel} 写完后是 ${over}，超过硬上限。先把已有条目压缩或归档再追加；` +
+    `压缩（让索引变短）的写入一律放行。`
+}
+
+/** 注册 guard：Context 的 tools.guard 是同步、单调的拒绝，后续监听无法翻回放行。 */
+export function indexCapGuard(kbRoot) {
+  return (exec) => {
+    try {
+      return judgeIndexWrite(kbRoot, exec?.name, exec?.arguments)
+    } catch {
+      return undefined // 判不动就放行：宁可漏，不可误拒
+    }
+  }
 }
 
 /* =========================================================================
@@ -486,6 +585,13 @@ export function apply(ctx, config = {}) {
         content: skillBody,
       }))
     })
+  }
+
+  // ---- 记忆索引硬上限：ctx.tools.guard（同步、单调拒绝） ----
+  // 200 行 / 25KB 之前只写在 AGENTS.md 和 kb-check.py 里，模型写超了也能落盘。
+  // guard 在写入前同步判定，只拦「越界且变大」，压缩写入照常放行。
+  if (config.indexCap !== false && typeof ctx.tools?.guard === 'function') {
+    ctx.tools.guard(indexCapGuard(kbRoot))
   }
 
   // ---- 写入即同步 hook：tools/result 监听（核心） ----
