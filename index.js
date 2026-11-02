@@ -33,7 +33,7 @@ const reminderFactory = import('@deepseek-ai/dsh-llm').then((m) => m.createUserM
 
 export const name = 'local-kb'
 
-// `tools` 是唯一硬依赖：写入钩子必须能确权。skills/credentials/webServer 都是可选服务，
+// `tools` 是唯一硬依赖：写入钩子必须能确权。skills/credentials/connection 都是可选服务，
 // 用 ctx.inject 懒取，缺了也不阻塞启动。
 export const inject = ['tools']
 
@@ -624,7 +624,9 @@ function runKbCheckProcess(python, script, kbRoot) {
     // ---- 任务内提醒（post-execute 附加上下文；不 deny、不重写结果、零打断）----
     const kbGrep = 'grep -rn "关键词" ' + kbRoot + '/projects/*/*.md ' + kbRoot + '/docs/'
     const reminderTexts = {
-      global: '全盘扫描开销大。若在找本地项目/代码/文档，知识库有索引：' + kbGrep + '，未命中再全盘搜索。',
+      // 知识库没有覆盖项目/文档的总索引（只有记忆有 MEMORY.md），
+      // 所以这里不能说「知识库有索引」——那是错误的定位信息。
+      global: '全盘扫描开销大。KB 没命中可以换关键词再搜一次（项目页/文档是中文正文，别名在 frontmatter）；仍无结果再全盘搜索。',
       memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：先 read ' + kbRoot + '/memory/MEMORY.md（提项目再读 projects/<id>/memory/MEMORY.md）。不涉及记忆可忽略本提示。',
       web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
     }
@@ -714,17 +716,32 @@ function runKbCheckProcess(python, script, kbRoot) {
     })
   }
 
-  // ---- 设置页 HTTP API（静态插件的 Client↔Host 通道：webServer 路由 + fetch） ----
-  ctx.inject(['webServer'], (scope) => {
-    scope.effect(() => {
-      const handler = createApiHandler({
-        kbRoot, dshHome, syncState, runSync, getCredentials: () => ctx.get('credentials'),
-      })
-      for (const sub of ['', '/state', '/sync', '/test-link']) {
-        scope.webServer.register({ kind: 'exact', path: API_BASE + sub, handler })
-      }
-      return () => {}
-    }, 'local-kb: http-api')
+  // ---- 设置页 API：走 dsh 的 connection.fetch（带登录态与跨站校验） ----
+  // 旧写法用 webServer 注册 exact 路由，直接命中本插件的 node handler，绕过了 dsh 的
+  // /api 鉴权围栏：实测未登录请求 /api/local-kb/state 返回 200，并吐出 WebDAV 地址与
+  // 用户名（DSH 自身路由同场景返回 401）。connection.fetch.register 的路由由 dsh 判定
+  // 主人身份：未登录 401、跨站 403，插件不再自己承担鉴权。
+  ctx.inject(['connection'], (scope) => {
+    if (typeof scope.connection?.fetch?.register !== 'function') return
+    const handlers = createApiHandlers({
+      kbRoot, dshHome, syncState, runSync, getCredentials: () => ctx.get('credentials'),
+    })
+    const routes = [
+      { path: API_BASE, methods: ['GET'], fetch: handlers.state },
+      { path: API_BASE + '/state', methods: ['GET'], fetch: handlers.state },
+      { path: API_BASE + '/sync', methods: ['POST'], fetch: handlers.sync },
+      { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
+    ]
+    for (const route of routes) {
+      scope.effect(() => {
+        try {
+          return scope.connection.fetch.register(route)
+        } catch {
+          // 同路径已被别的行占用：不注册，页面拿到 404 而不是把请求交给别人
+          return () => {}
+        }
+      }, 'local-kb: route ' + route.path)
+    }
   })
 
 }
@@ -739,67 +756,65 @@ function readSkillBody() {
   }
 }
 
-/** 组装设置页 HTTP handler。 */
-function createApiHandler({ kbRoot, dshHome, syncState, runSync, getCredentials }) {
+/** 组装设置页 API 的三个 handler（Web Fetch API：Request → Response）。 */
+function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials }) {
   const resolveRefFor = async (ref) => {
     const creds = getCredentials()
     if (!creds || typeof creds.resolve !== 'function') return undefined
     const hit = await creds.resolve(ref)
     return hit && typeof hit.value === 'string' && hit.value.length > 0 ? hit.value : undefined
   }
-  return async (req, res) => {
-    // exact 路由直接命中本 handler（绕过 connection 的 /api prefix 围栏，同 turn-undo）。
-    const url = new URL(req.url, 'http://local')
-    const pathname = url.pathname.replace(/\/+$/, '') || '/'
-    try {
-      if (req.method === 'GET' && (pathname === API_BASE || pathname === API_BASE + '/state')) {
-        // message 级状态（时间/结果/错误）返回；fileMap 只在插件内部作增量基准，
-        // 体积大且 client 不需要（状态已持久化到 .kb-sync-state.json）。
-        const st = syncState.snapshot()
-        // 回显已存凭据（URL/用户名可见；密码永不回显——describe 不返回值是安全设计）。
-        // host 能 resolve 拿值，client 打开设置页时据此回填输入框。
-        const storedUrl = await resolveRefFor(CRED_URL_REF)
-        const storedUser = (await resolveRefFor(CRED_USER_REF)) || ''
-        json(res, 200, {
-          ok: true,
-          kbRoot,
-          dshHome,
-          webdavUrl: storedUrl || '',
-          webdavUser: storedUser,
-          state: {
-            lastSyncAt: st.lastSyncAt,
-            lastSyncStatus: st.lastSyncStatus,
-            lastError: st.lastError,
-            lastTrigger: st.lastTrigger,
-            syncedFiles: st.syncedFiles,
-            lastCheckAt: st.lastCheckAt,
-            lastCheckStatus: st.lastCheckStatus,
-            lastCheckError: st.lastCheckError,
-          },
-          installed: await skillInstalled(dshHome),
-        })
-        return
+
+  return {
+    /** GET /api/local-kb/state：设置页打开时读取的位置、凭据回显与同步状态。 */
+    state: async () => {
+      // message 级状态（时间/结果/错误）返回；fileMap 只在插件内部作增量基准，
+      // 体积大且 client 不需要（状态已持久化到 .kb-sync-state.json）。
+      const st = syncState.snapshot()
+      const storedUrl = await resolveRefFor(CRED_URL_REF)
+      const storedUser = (await resolveRefFor(CRED_USER_REF)) || ''
+      return jsonResponse(200, {
+        ok: true,
+        kbRoot,
+        dshHome,
+        webdavUrl: storedUrl || '',
+        webdavUser: storedUser,
+        state: {
+          lastSyncAt: st.lastSyncAt,
+          lastSyncStatus: st.lastSyncStatus,
+          lastError: st.lastError,
+          lastTrigger: st.lastTrigger,
+          syncedFiles: st.syncedFiles,
+          lastCheckAt: st.lastCheckAt,
+          lastCheckStatus: st.lastCheckStatus,
+          lastCheckError: st.lastCheckError,
+        },
+        installed: await skillInstalled(dshHome),
+      })
+    },
+
+    /** POST /api/local-kb/sync：立即同步。 */
+    sync: async () => {
+      const result = await runSync({ trigger: 'manual' })
+      return jsonResponse(200, { ok: result.ok, ...result })
+    },
+
+    /** POST /api/local-kb/test-link：用表单值（空则回退已存凭据）测 WebDAV 连通性。 */
+    testLink: async (request) => {
+      let body = {}
+      try {
+        body = await request.json()
+      } catch {
+        body = {}
       }
-      if (req.method === 'POST' && pathname === API_BASE + '/sync') {
-        const result = await runSync({ trigger: 'manual' })
-        json(res, 200, { ok: result.ok, ...result })
-        return
-      }
-      if (req.method === 'POST' && pathname === API_BASE + '/test-link') {
-        const body = await readBody(req).catch(() => ({}))
-        // 表单里的空串（用户没填/没动密码框）一律回退已存凭据 —— 空密码绝不能
-        // 覆盖已存密码去测试。未保存的改动可先测：非空字段用表单值。
-        const url = (typeof body.url === 'string' && body.url.trim() !== '') ? body.url.trim() : (await resolveRefFor(CRED_URL_REF))
-        const user = (typeof body.user === 'string' && body.user.trim() !== '') ? body.user.trim() : ((await resolveRefFor(CRED_USER_REF)) || '')
-        const password = (typeof body.password === 'string' && body.password !== '') ? body.password : ((await resolveRefFor(CRED_PASSWORD_REF)) || '')
-        const result = await testLink({ url, user, password })
-        json(res, 200, result)
-        return
-      }
-      json(res, 404, { ok: false, reason: 'not found' })
-    } catch (error) {
-      json(res, 500, { ok: false, reason: error instanceof Error ? error.message : String(error) })
-    }
+      if (body === null || typeof body !== 'object') body = {}
+      // 表单里的空串（用户没填/没动密码框）一律回退已存凭据 —— 空密码绝不能
+      // 覆盖已存密码去测试。未保存的改动可先测：非空字段用表单值。
+      const url = (typeof body.url === 'string' && body.url.trim() !== '') ? body.url.trim() : (await resolveRefFor(CRED_URL_REF))
+      const user = (typeof body.user === 'string' && body.user.trim() !== '') ? body.user.trim() : ((await resolveRefFor(CRED_USER_REF)) || '')
+      const password = (typeof body.password === 'string' && body.password !== '') ? body.password : ((await resolveRefFor(CRED_PASSWORD_REF)) || '')
+      return jsonResponse(200, await testLink({ url, user, password }))
+    },
   }
 }
 
@@ -812,28 +827,16 @@ async function skillInstalled(dshHome) {
   }
 }
 
-function readBody(req) {
-  return new Promise((resolvePromise, reject) => {
-    const chunks = []
-    req.on('data', (c) => chunks.push(c))
-    req.on('end', () => {
-      try {
-        const raw = Buffer.concat(chunks).toString('utf8')
-        resolvePromise(raw ? JSON.parse(raw) : {})
-      } catch (error) {
-        reject(error)
-      }
-    })
-    req.on('error', reject)
+/** 所有 API 回答：JSON、不缓存、不被浏览器嗅探成别的类型。 */
+function jsonResponse(status, body) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
   })
-}
-
-function json(res, status, value) {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-  })
-  res.end(JSON.stringify(value) + '\n')
 }
 
 

@@ -52,6 +52,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "test:gate": "node tests/gate.spec.mjs"
+    "test": "node tests/gate.spec.mjs && node tests/api.spec.mjs",
+    "test:gate": "node tests/gate.spec.mjs",
+    "test:api": "node tests/api.spec.mjs"
   }
 }
