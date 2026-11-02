@@ -58,6 +58,7 @@
     "test:path": "node tests/path.spec.mjs",
     "test:bash": "node tests/bash.spec.mjs",
     "test:index-cap": "node tests/index-cap.spec.mjs",
-    "test:delete": "node tests/delete-guard.spec.mjs"
+    "test:delete": "node tests/delete-guard.spec.mjs",
+    "test:uninstall": "node tests/uninstall.spec.mjs"
   }
 }

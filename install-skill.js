@@ -37,9 +37,9 @@
  * Zero dependencies, plain ESM, node: builtins only — same ethos as index.js.
  */
 import { constants as FS } from 'node:fs'
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const SKILL_NAME = 'local-kb'
@@ -228,4 +228,71 @@ async function listTree(root) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 卸载：撤掉插件安装进用户目录的东西 —— 技能副本与 AGENTS.md 的 KB_LOCAL 块。
+ *
+ * 这是**用户主动运行**的操作（`node install-skill.js --uninstall`）。插件在运行时
+ * 不会自动调用它：知识库内容只由用户处置，卸载也不能替用户删东西。
+ *
+ * 凭据（$DSH_HOME/.credentials.yaml 里的 dsh_local_kb_webdav_*）不动，由用户决定。
+ */
+export async function uninstallSkill(opts = {}) {
+  const dshHome = resolveDshHome(opts.env ?? process.env)
+  const skillsRoot = resolve(join(dshHome, 'skills'))
+  const dest = resolve(join(skillsRoot, SKILL_NAME))
+  const removed = []
+  const notes = []
+
+  // 只删自己装的那一个目录，且必须真的落在 skills/ 下面
+  if (dest !== skillsRoot && dest.startsWith(skillsRoot + sep)) {
+    try {
+      await access(dest, FS.F_OK)
+      await rm(dest, { recursive: true, force: true })
+      removed.push(dest)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') notes.push(`技能副本删除失败：${errorMessage(error)}`)
+    }
+  }
+
+  const agentsPath = resolve(join(dshHome, AGENTS_FILENAME))
+  let current
+  try {
+    current = await readFile(agentsPath, 'utf8')
+  } catch {
+    current = undefined
+  }
+  if (current === undefined) {
+    notes.push(`${AGENTS_FILENAME} 不存在，无需处理`)
+  } else {
+    const start = current.indexOf(AGENTS_MARKER_START)
+    const end = current.indexOf(AGENTS_MARKER_END)
+    if (start !== -1 && end > start) {
+      const before = current.slice(0, start).replace(/\s+$/, '')
+      const after = current.slice(end + AGENTS_MARKER_END.length).replace(/^\s+/, '')
+      const next = [before, after].filter(Boolean).join('\n\n')
+      try {
+        await writeFile(agentsPath, next === '' ? '' : next + '\n', 'utf8')
+        removed.push(`${agentsPath} 的 KB_LOCAL 块`)
+      } catch (error) {
+        notes.push(`${AGENTS_FILENAME} 清理失败：${errorMessage(error)}`)
+      }
+    } else {
+      notes.push(`${AGENTS_FILENAME} 里没有 KB_LOCAL 块`)
+    }
+  }
+
+  notes.push('WebDAV 凭据保留在 $DSH_HOME/.credentials.yaml，需要时手动删除')
+  return { removed, notes }
+}
+
+// 直接运行：node install-skill.js [--uninstall]
+const invokedDirectly =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (invokedDirectly) {
+  const result = process.argv.includes('--uninstall')
+    ? await uninstallSkill()
+    : await installSkill()
+  console.log(JSON.stringify(result, null, 2))
 }
