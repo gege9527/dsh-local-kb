@@ -1,10 +1,26 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { apply } from '../index.js'
 
 // ---- 设置页 API 测试：路由走 connection.fetch（dsh 鉴权围栏），不再是 webServer ----
 // 这里只验证注册形状与 handler 行为；401/403 由 dsh 的 connection 层负责，
 // 需要真实 host 才能复现（见 README 的验证命令）。
 
-const KB_ROOT = '/tmp/fake-kb-api'
+const KB_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-api-'))
+// 状态目录跟着测试走，不写用户真实的 ~/.dsh
+process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-api-home-'))
+
+const mk = (rel, text) => {
+  const abs = path.join(KB_ROOT, rel)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, text)
+}
+mk('projects/demo/memory/MEMORY.md', '# demo\n- [a](a.md)\n')
+mk('projects/demo/memory/a.md', 'x')
+mk('projects/demo/demo.md', '---\ntitle: demo\n---\n')
+mk('docs/guide.md', '# guide\n')
+fs.writeFileSync(path.join(KB_ROOT, 'paths.yaml'), 'demo:\n  path: /tmp/demo\n')
 
 const routes = []
 const registeredServices = []
@@ -59,18 +75,17 @@ const check = (name, ok, detail = '') => {
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (ok ? '' : '  ' + detail))
 }
 
-check('注册 5 条路由', routes.length === 5, 'got ' + routes.length)
+check('注册 4 条路由', routes.length === 4, 'got ' + routes.length)
 const byPath = new Map(routes.map((r) => [r.path, r]))
 check('state 路由存在', byPath.has('/api/local-kb/state'))
 check('overview 路由存在', byPath.has('/api/local-kb/overview'))
 check('overview 只接受 GET', JSON.stringify(byPath.get('/api/local-kb/overview')?.methods) === '["GET"]')
 check('sync 路由存在', byPath.has('/api/local-kb/sync'))
 check('test-link 路由存在', byPath.has('/api/local-kb/test-link'))
-check('根路径也能读状态', byPath.has('/api/local-kb'))
 check('state 只接受 GET', JSON.stringify(byPath.get('/api/local-kb/state')?.methods) === '["GET"]')
 check('sync 只接受 POST', JSON.stringify(byPath.get('/api/local-kb/sync')?.methods) === '["POST"]')
 check('test-link 只接受 POST', JSON.stringify(byPath.get('/api/local-kb/test-link')?.methods) === '["POST"]')
-check('test-link 缓冲请求体', byPath.get('/api/local-kb/test-link')?.requestBody === 'buffered')
+check('每条路由都声明 requestBody', routes.every((r) => r.requestBody === 'buffered'), JSON.stringify(routes.map((r) => [r.path, r.requestBody])))
 check('不再注册 webServer', !registeredServices.includes('webServer'), registeredServices.join(','))
 
 const stateRoute = byPath.get('/api/local-kb/state')
@@ -106,7 +121,13 @@ const overviewRes = await overviewRoute.fetch(new Request('http://local/api/loca
 const overviewBody = await overviewRes.json()
 check('overview 返回 200', overviewRes.status === 200, String(overviewRes.status))
 check('overview 返回项目数组', Array.isArray(overviewBody.projects), JSON.stringify(overviewBody))
+check('overview 统计到项目', overviewBody.projects.length === 1, JSON.stringify(overviewBody.projects))
+check('overview 项目里带记忆条数', overviewBody.projects[0]?.memories === 1, JSON.stringify(overviewBody.projects[0]))
+check('overview 项目里带索引行数', overviewBody.projects[0]?.indexLines === 3, JSON.stringify(overviewBody.projects[0]))
+check('overview 统计到文档', overviewBody.docs === 1, String(overviewBody.docs))
+check('overview 标出已登记路径', overviewBody.projects[0]?.path === '/tmp/demo', JSON.stringify(overviewBody.projects[0]))
 
 const failed = results.filter((r) => !r.ok)
 console.log(`\n---- ${results.length - failed.length} passed, ${failed.length} failed ----`)
+fs.rmSync(KB_ROOT, { recursive: true, force: true })
 if (failed.length > 0) process.exitCode = 1

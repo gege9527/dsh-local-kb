@@ -35,10 +35,11 @@ window.__ModuleLoader__.load({
     var pluginRemote = null
     var pluginCtx = null
     var pluginRemoteReady = false
-    var API_STATE = '/api/local-kb/state'
-    var API_SYNC = '/api/local-kb/sync'
-    var API_TEST = '/api/local-kb/test-link'
-    var API_OVERVIEW = '/api/local-kb/overview'
+    // 相对路径，与 dsh 自己的页面一致：部署带前缀时也落在同一个 origin 前缀下
+    var API_STATE = 'api/local-kb/state'
+    var API_SYNC = 'api/local-kb/sync'
+    var API_TEST = 'api/local-kb/test-link'
+    var API_OVERVIEW = 'api/local-kb/overview'
 
     var CRED_URL = 'dsh_local_kb_webdav_url'
     var CRED_USER = 'dsh_local_kb_webdav_user'

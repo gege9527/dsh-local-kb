@@ -15,7 +15,7 @@
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as FS, readFileSync, realpathSync, statSync } from 'node:fs'
+import { constants as FS, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { access, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
@@ -1329,23 +1329,33 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
   // 用户名（DSH 自身路由同场景返回 401）。connection.fetch.register 的路由由 dsh 判定
   // 主人身份：未登录 401、跨站 403，插件不再自己承担鉴权。
   ctx.inject(['connection'], (scope) => {
-    if (typeof scope.connection?.fetch?.register !== 'function') return
+    const register = scope.connection?.fetch?.register
+    if (typeof register !== 'function') {
+      writeRouteDebug(dshHome, { at: new Date().toISOString(), problem: 'connection.fetch.register 不可用' })
+      return
+    }
     const handlers = createApiHandlers({
       kbRoot, dshHome, syncState, runSync, getCredentials: () => ctx.get('credentials'),
     })
+    // 每条路都必须带 requestBody：dsh 靠它决定请求体怎么喂给 handler。
     const routes = [
-      { path: API_BASE, methods: ['GET'], fetch: handlers.state },
-      { path: API_BASE + '/state', methods: ['GET'], fetch: handlers.state },
-      { path: API_BASE + '/overview', methods: ['GET'], fetch: handlers.overview },
-      { path: API_BASE + '/sync', methods: ['POST'], fetch: handlers.sync },
+      { path: API_BASE + '/state', methods: ['GET'], requestBody: 'buffered', fetch: handlers.state },
+      { path: API_BASE + '/overview', methods: ['GET'], requestBody: 'buffered', fetch: handlers.overview },
+      { path: API_BASE + '/sync', methods: ['POST'], requestBody: 'buffered', fetch: handlers.sync },
       { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
     ]
+    const report = { at: new Date().toISOString(), routes: [] }
     for (const route of routes) {
       scope.effect(() => {
         try {
-          return scope.connection.fetch.register(route)
-        } catch {
+          const dispose = register(route)
+          report.routes.push({ path: route.path, ok: true })
+          writeRouteDebug(dshHome, report)
+          return dispose
+        } catch (error) {
           // 同路径已被别的行占用：不注册，页面拿到 404 而不是把请求交给别人
+          report.routes.push({ path: route.path, ok: false, error: String(error?.message ?? error) })
+          writeRouteDebug(dshHome, report)
           return () => {}
         }
       }, 'local-kb: route ' + route.path)
@@ -1560,6 +1570,17 @@ export function createCompactionReminder(pressure = {}, threshold = REMINDER_PRE
     if (tokens / window < ratio) return ''
     reminded.add(session)
     return COMPACTION_REMINDER_TEXT
+  }
+}
+
+/** 路由注册诊断：写 $DSH_HOME/local-kb/route-debug.json（排查设置页 404 用）。 */
+function writeRouteDebug(dshHome, report) {
+  try {
+    const dir = join(dshHome, 'local-kb')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'route-debug.json'), JSON.stringify(report, null, 2), 'utf8')
+  } catch {
+    // 诊断写不出来不影响功能
   }
 }
 
