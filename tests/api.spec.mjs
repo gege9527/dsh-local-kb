@@ -59,9 +59,11 @@ const check = (name, ok, detail = '') => {
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (ok ? '' : '  ' + detail))
 }
 
-check('注册 4 条路由', routes.length === 4, 'got ' + routes.length)
+check('注册 5 条路由', routes.length === 5, 'got ' + routes.length)
 const byPath = new Map(routes.map((r) => [r.path, r]))
 check('state 路由存在', byPath.has('/api/local-kb/state'))
+check('overview 路由存在', byPath.has('/api/local-kb/overview'))
+check('overview 只接受 GET', JSON.stringify(byPath.get('/api/local-kb/overview')?.methods) === '["GET"]')
 check('sync 路由存在', byPath.has('/api/local-kb/sync'))
 check('test-link 路由存在', byPath.has('/api/local-kb/test-link'))
 check('根路径也能读状态', byPath.has('/api/local-kb'))
@@ -98,6 +100,12 @@ const badRes = await testRoute.fetch(new Request('http://local/api/local-kb/test
 }))
 const badBody = await badRes.json()
 check('test-link 非法 JSON 不抛 500', badRes.status === 200 && badBody.ok === false, JSON.stringify(badBody))
+
+const overviewRoute = byPath.get('/api/local-kb/overview')
+const overviewRes = await overviewRoute.fetch(new Request('http://local/api/local-kb/overview'))
+const overviewBody = await overviewRes.json()
+check('overview 返回 200', overviewRes.status === 200, String(overviewRes.status))
+check('overview 返回项目数组', Array.isArray(overviewBody.projects), JSON.stringify(overviewBody))
 
 const failed = results.filter((r) => !r.ok)
 console.log(`\n---- ${results.length - failed.length} passed, ${failed.length} failed ----`)

@@ -1,18 +1,28 @@
 {
   "name": "dsh-local-kb",
-  "version": "0.1.1",
-  "description": "知识库插件：自动安装 local-kb 技能与常驻规范、写入即自动 WebDAV 同步、设置页管理",
+  "version": "0.2.0",
+  "description": "知识库 + 长期记忆插件：每轮注入记忆索引与知识地图、索引硬上限、禁止 AI 删除、镜像同步到 WebDAV",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
     "dsh",
     "knowledge-base",
     "local-kb",
+    "memory",
     "webdav",
     "sync"
   ],
   "type": "module",
   "main": "index.js",
+  "author": "lyu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gege9527/dsh-local-kb.git"
+  },
+  "homepage": "https://github.com/gege9527/dsh-local-kb#readme",
+  "bugs": {
+    "url": "https://github.com/gege9527/dsh-local-kb/issues"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -24,10 +34,17 @@
         "remote",
         "remote.credentials"
       ]
+    },
+    "compatibility": {
+      "dsh": ">=0.1.0 <0.3.0-0",
+      "dshReleases": {
+        "0.2.2-alpha.2": "compatible"
+      }
     }
   },
   "exports": {
     ".": "./index.js",
+    "./inject": "./inject.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
@@ -35,6 +52,7 @@
   },
   "files": [
     "index.js",
+    "inject.js",
     "install-skill.js",
     "client.js",
     "skill/",
@@ -52,16 +70,16 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "test": "node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs",
+    "test": "node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs && node tests/uninstall.spec.mjs",
     "test:gate": "node tests/gate.spec.mjs",
-    "test:inject": "node tests/inject.spec.mjs",
-    "test:agents": "node tests/agents-block.spec.mjs",
-    "test:mirror": "node tests/mirror.spec.mjs",
     "test:api": "node tests/api.spec.mjs",
     "test:path": "node tests/path.spec.mjs",
     "test:bash": "node tests/bash.spec.mjs",
     "test:index-cap": "node tests/index-cap.spec.mjs",
     "test:delete": "node tests/delete-guard.spec.mjs",
+    "test:inject": "node tests/inject.spec.mjs",
+    "test:agents": "node tests/agents-block.spec.mjs",
+    "test:mirror": "node tests/mirror.spec.mjs",
     "test:uninstall": "node tests/uninstall.spec.mjs"
   }
 }

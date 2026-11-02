@@ -2,7 +2,7 @@
 """kb-check — local-kb 知识库校验闸门（零依赖，Python 3.9+）
 
 用法:
-    python3 kb-check.py [KB_ROOT]        # 默认 ~/.local-kb
+    python3 kb-check.py [KB_ROOT] [--json]   # 默认 ~/.local-kb；--json 输出结构化结果
 
 退出码:
     0 = 全部通过
@@ -17,6 +17,7 @@
     项目页 存在 / 含 project_id / 无 project_path / 有资料时含「项目资料」节
     路径  paths.yaml 条目格式
 """
+import json
 import os
 import re
 import sys
@@ -157,11 +158,16 @@ def walk_md(root, skip=("archive",)):
                 yield os.path.join(dirpath, f)
 
 
-KB = os.path.abspath(os.path.expanduser(sys.argv[1] if len(sys.argv) > 1 else "~/.local-kb"))
+ARGV = [a for a in sys.argv[1:] if not a.startswith("--")]
+JSON_MODE = "--json" in sys.argv[1:]
+KB = os.path.abspath(os.path.expanduser(ARGV[0] if ARGV else "~/.local-kb"))
 PROJECT_ROOT_ROOT = os.path.join(KB, "projects")
 GLOBAL_MEM_ROOT = os.path.join(KB, "memory")
 if not os.path.isdir(KB):
-    print("kb-check: KB_ROOT 不存在: %s" % KB)
+    if JSON_MODE:
+        print(json.dumps({"ok": False, "errors": ["KB_ROOT 不存在: %s" % KB], "warns": [], "stats": {}}, ensure_ascii=False))
+    else:
+        print("kb-check: KB_ROOT 不存在: %s" % KB)
     sys.exit(1)
 
 # 记忆
@@ -218,6 +224,21 @@ if os.path.exists(yp):
             errors.append("paths.yaml 有空 path 值")
 
 # 输出
+if JSON_MODE:
+    print(json.dumps({
+        "ok": not errors,
+        "errors": errors,
+        "warns": warns,
+        "stats": {
+            "memoryDirs": len([d for d in mem_dirs if os.path.isdir(d)]),
+            "memories": mem_total,
+            "docs": doc_total + proj_doc_total,
+            "errors": len(errors),
+            "warns": len(warns),
+        },
+    }, ensure_ascii=False))
+    sys.exit(1 if errors else (2 if warns else 0))
+
 print("kb-check @ %s" % KB)
 print("记忆目录 %d | 记忆 %d 条 | 文档 %d+%d 个" % (len([d for d in mem_dirs if os.path.isdir(d)]), mem_total, doc_total, proj_doc_total))
 if errors:

@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
     var API_STATE = '/api/local-kb/state'
     var API_SYNC = '/api/local-kb/sync'
     var API_TEST = '/api/local-kb/test-link'
+    var API_OVERVIEW = '/api/local-kb/overview'
 
     var CRED_URL = 'dsh_local_kb_webdav_url'
     var CRED_USER = 'dsh_local_kb_webdav_user'
@@ -92,9 +93,19 @@ window.__ModuleLoader__.load({
         ? 'hooks（写入即同步、KB-first 提醒、定时器、API 路由）随插件禁用/卸载自动清理，无需手动处理。'
         : 'Hooks (write-sync, KB-first reminder, timers, API routes) are auto-cleaned when the plugin is disabled or uninstalled — nothing to do manually.',
       aboutManualClean: isZh()
-        ? '不会自动删除，需手动清理：技能副本 ~/.dsh/skills/local-kb/、AGENTS.md 的 KB_LOCAL 常驻块、WebDAV 凭据（~/.dsh/.credentials.yaml 中 dsh_local_kb_webdav_* 条目）。'
-        : 'Not auto-removed; clean manually when needed: the skill copy at ~/.dsh/skills/local-kb/, the KB_LOCAL block in ~/.dsh/AGENTS.md, and the WebDAV credentials (dsh_local_kb_webdav_* entries in ~/.dsh/.credentials.yaml).',
+        ? '不会自动删除：在插件目录运行 node install-skill.js --uninstall 可移除技能副本与 AGENTS.md 常驻块（块外内容保留）；WebDAV 凭据需手动删除。'
+        : 'Not auto-removed: run node install-skill.js --uninstall in the plugin directory to remove the skill copy and the KB_LOCAL block (content outside it is kept); WebDAV credentials must be deleted by hand.',
       syncFailedAt: isZh() ? '同步失败（{time}）：{reason}' : 'Sync failed at {time}: {reason}',
+      checkPrefix: isZh() ? '知识库体检' : 'KB check',
+      checkOk: isZh() ? '通过' : 'passed',
+      checkWarn: isZh() ? '有警告' : 'warnings',
+      checkFail: isZh() ? '未通过' : 'failed',
+      checkNever: isZh() ? '尚未校验（写入知识库后自动运行）' : 'not checked yet (runs after a KB write)',
+      overviewTitle: isZh() ? '知识库内容' : 'What is in the KB',
+      overviewSummary: isZh() ? '{projects} 个项目 · {docs} 个文档' : '{projects} projects · {docs} docs',
+      overviewNoPath: isZh() ? '未登记路径' : 'no path in paths.yaml',
+      overviewMissing: isZh() ? '路径不存在' : 'path missing',
+      overviewNone: isZh() ? '还没有项目' : 'no projects yet',
       loading: isZh() ? '加载中…' : 'Loading…',
       auto: isZh() ? '自动' : 'auto',
       manual: isZh() ? '手动' : 'manual'
@@ -229,6 +240,7 @@ window.__ModuleLoader__.load({
         setNotice(null)
       }
       var [syncState, setSyncState] = useState({})
+      var [overview, setOverview] = useState(null)
 
       function refreshState() {
         return getJson(API_STATE).then(function (data) {
@@ -257,6 +269,10 @@ window.__ModuleLoader__.load({
         // 无需轮询。操作（保存/测试/同步）后各自 refreshState()。
         refreshState()
         loadCredentials()
+        // 只读快照：项目清单、记忆条数、索引行数、文档数。不读任何文档正文。
+        getJson(API_OVERVIEW).then(function (data) {
+          if (data && data.ok) setOverview(data)
+        }).catch(function () { /* 读不到就不显示这一块 */ })
       }, [])
 
       function saveConfig() {
@@ -378,9 +394,28 @@ window.__ModuleLoader__.load({
       } else if (lastStatus === 'ok' && syncState.lastSyncAt) {
         line = { text: T.lastOk + '（' + fmtTime(syncState.lastSyncAt) + '）', cls: 'dsh-lkb-status-ok' }
       }
+      // 体检结果：kb-check.py --json 的统计与前几条警告。只读展示，删除/修复由用户决定。
+      var stats = syncState && syncState.lastCheckStats
+      var checkStatus = syncState && syncState.lastCheckStatus
+      var checkLine = null
+      if (checkStatus) {
+        var checkLabel = checkStatus === 'ok' ? T.checkOk : checkStatus === 'warn' ? T.checkWarn : T.checkFail
+        var checkDetail = stats
+          ? '（' + (isZh() ? '记忆 ' + stats.memories + ' 条 / 文档 ' + stats.docs + ' 个' : stats.memories + ' notes / ' + stats.docs + ' docs') + '）'
+          : ''
+        var checkCls = checkStatus === 'ok' ? 'dsh-lkb-status-ok' : checkStatus === 'warn' ? 'dsh-lkb-status-warn' : 'dsh-lkb-status-fail'
+        checkLine = h('span', { className: checkCls },
+          T.checkPrefix + '：' + checkLabel + checkDetail + (syncState.lastCheckAt ? ' · ' + fmtTime(syncState.lastCheckAt) : ''))
+      }
+      var warnList = (syncState && syncState.lastCheckWarns) || []
+      var warnEls = warnList.slice(0, 3).map(function (w, i) {
+        return h('span', { key: 'w' + i, className: 'dsh-lkb-status-warn' }, '· ' + w)
+      })
       var statusEl = h('div', { className: 'dsh-lkb-status' },
         line ? h('span', { className: line.cls }, line.text)
-          : h('span', null, T.never))
+          : h('span', null, T.never),
+        checkLine || h('span', null, T.checkNever),
+        warnEls.length > 0 ? warnEls : null)
 
       var noticeEl = notice ? h('div', { className: 'dsh-lkb-toast dsh-lkb-toast-' + (notice.kind === 'error' ? 'error' : 'ok'), role: 'status' },
         notice.text) : null
@@ -389,6 +424,25 @@ window.__ModuleLoader__.load({
         h('style', { dangerouslySetInnerHTML: { __html: css } }),
         h('div', { className: 'dsh-lkb-section' },
           h('p', { className: 'dsh-lkb-desc' }, T.sectionDesc),
+
+          // 知识库内容（只读）：项目、记忆条数、索引行数、文档数
+          overview ? h('div', { className: 'dsh-lkb-card' },
+            h('div', { className: 'dsh-lkb-label' }, T.overviewTitle),
+            h('p', { className: 'dsh-lkb-desc' },
+              T.overviewSummary
+                .replace('{projects}', String(overview.projects.length))
+                .replace('{docs}', String(overview.docs))),
+            overview.projects.length === 0
+              ? h('p', { className: 'dsh-lkb-desc' }, T.overviewNone)
+              : h('div', { className: 'dsh-lkb-status' },
+                overview.projects.slice(0, 12).map(function (p) {
+                  var mark = p.path === null ? T.overviewNoPath : p.pathExists === false ? T.overviewMissing : ''
+                  return h('span', { key: p.id, className: p.pathExists === false ? 'dsh-lkb-status-warn' : '' },
+                    p.id + ' · ' + (isZh() ? '记忆 ' : 'notes ') + p.memories +
+                    ' · ' + (isZh() ? '索引 ' : 'index ') + p.indexLines + (isZh() ? ' 行' : ' lines') +
+                    (mark ? ' · ' + mark : ''))
+                }))
+          ) : null,
 
           // 插件说明（关于本插件：卸载行为与手动清理指引）
           h('div', { className: 'dsh-lkb-card' },

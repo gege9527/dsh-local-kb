@@ -30,6 +30,7 @@ import {
   DEFAULT_INDEX_MAX_LINES,
   knowledgeMapText,
   memoryIndexText,
+  parsePathsYaml,
 } from './inject.js'
 
 // 任务内提醒的消息工厂：优先用 DSH 官方 createUserMessage；解析失败（测试/非 DSH 环境）
@@ -60,7 +61,10 @@ export const SYNC_STATE_DEFAULT = {
   failedDeletes: 0,    // 本次删除失败数（下次镜像自然重试）
   lastCheckAt: null,     // kb-check.py 最近一次运行时间（技能铁律：写入后必校验）
   lastCheckStatus: null, // 'ok' | 'warn' | 'failed' | null
-  lastCheckError: null,  // 校验输出的错误行
+  lastCheckError: null, // 首条错误（设置页横幅用）
+  lastCheckErrors: [],  // 前 5 条错误
+  lastCheckWarns: [],   // 前 5 条警告
+  lastCheckStats: null, // { memoryDirs, memories, docs, errors, warns }
 }
 
 /** Sync 目录的写工具名（write 是整体替换；edit/str_replace/insert 是就地修改）。 */
@@ -862,7 +866,8 @@ export function apply(ctx, config = {}) {
           '知识库查询/写入/记忆的任何请求：找东西、存文档、记住事实时先查知识库；' +
           '任何写入 ' + kbRoot + ' 的读写任务。',
         source: 'runtime',
-        content: skillBody,
+        // 技能副本读不到（安装失败/被删）时退回内置摘要，绝不让技能条目退回 null。
+        content: skillBody ?? builtinSkill(kbRoot),
       }))
     })
   }
@@ -976,15 +981,25 @@ async function runKbCheck() {
   const at = new Date().toISOString()
   const python = platform() === 'win32' ? 'python' : 'python3'
   try {
-    const result = await runKbCheckProcess(python, script, kbRoot)
+    // --json：结构化拿错误/警告/统计，页面据此分项目展示，不解析人类可读文本
+    const result = await runKbCheckProcess(python, script, kbRoot, ['--json'])
     const status = result.code === 0 ? 'ok' : result.code === 2 ? 'warn' : 'failed'
-    if (status === 'ok') {
-      await syncState.record({ lastCheckAt: at, lastCheckStatus: status, lastCheckError: null })
-    } else {
-      // warn/failed：把脚本错误输出行记录进状态（供设置页提示）
-      const lines = (result.out || '').split('\n').filter((l) => l && !/^kb-check @/.test(l) && !/记忆目录/.test(l) && !/文档/.test(l) && !/=====/.test(l))
-      await syncState.record({ lastCheckAt: at, lastCheckStatus: status, lastCheckError: lines.slice(0, 5).join('\n') })
+    let parsed
+    try {
+      parsed = JSON.parse(String(result.out).trim().split('\n').filter(Boolean).pop())
+    } catch {
+      parsed = undefined
     }
+    const errors = Array.isArray(parsed?.errors) ? parsed.errors.slice(0, 5) : []
+    const warns = Array.isArray(parsed?.warns) ? parsed.warns.slice(0, 5) : []
+    await syncState.record({
+      lastCheckAt: at,
+      lastCheckStatus: status,
+      lastCheckError: errors[0] ?? warns[0] ?? null,
+      lastCheckErrors: errors,
+      lastCheckWarns: warns,
+      lastCheckStats: parsed?.stats ?? null,
+    })
     return { status, at }
   } catch {
     // spawn 失败（python 缺失/超时）：记为工具不可用，不影响同步与对话
@@ -994,11 +1009,11 @@ async function runKbCheck() {
 }
 
 /** spawn 跑 kb-check，返回 { code, out }。超时/spawn 错误 reject。 */
-function runKbCheckProcess(python, script, kbRoot) {
+function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
   return new Promise((resolvePromise, rejectPromise) => {
     let out = ''
     let settled = false
-    const child = spawn(python, [script, kbRoot], { timeout: 60000 })
+    const child = spawn(python, [script, kbRoot, ...extraArgs], { timeout: 60000 })
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
@@ -1288,6 +1303,7 @@ function runKbCheckProcess(python, script, kbRoot) {
     const routes = [
       { path: API_BASE, methods: ['GET'], fetch: handlers.state },
       { path: API_BASE + '/state', methods: ['GET'], fetch: handlers.state },
+      { path: API_BASE + '/overview', methods: ['GET'], fetch: handlers.overview },
       { path: API_BASE + '/sync', methods: ['POST'], fetch: handlers.sync },
       { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
     ]
@@ -1303,6 +1319,23 @@ function runKbCheckProcess(python, script, kbRoot) {
     }
   })
 
+}
+
+/** 技能副本不可用时的最小说明：保证技能条目存在且指向正确位置。 */
+function builtinSkill(kbRoot) {
+  return [
+    '# local-kb — 知识库 + 长期记忆',
+    '',
+    '知识库根：' + kbRoot,
+    '',
+    '- 记忆：' + join(kbRoot, 'memory', 'MEMORY.md') + '（全局）、' +
+      join(kbRoot, 'projects', '<id>', 'memory', 'MEMORY.md') + '（项目级）',
+    '- 知识：' + join(kbRoot, 'projects') + '/<id>/<id>.md（项目页）、' + join(kbRoot, 'docs') + '（文档）',
+    '- 项目路径：' + join(kbRoot, 'paths.yaml'),
+    '- 检索：grep -rn "关键词" ' + join(kbRoot, 'projects', '*', '*.md') + ' ' + join(kbRoot, 'docs'),
+    '',
+    '完整协议见插件自带的 skill/SKILL.md；这一份只是副本不可用时的兜底。',
+  ].join('\n')
 }
 
 /** 读插件自带的完整 SKILL.md（注册运行时技能用）。 */
@@ -1352,6 +1385,79 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials
       })
     },
 
+    /** GET /api/local-kb/overview：知识库全貌（项目、文档、记忆用量），只读。 */
+    overview: async () => {
+      const entries = new Map()
+      try {
+        for (const entry of parsePathsYaml(readFileSync(join(kbRoot, 'paths.yaml'), 'utf8'))) {
+          entries.set(entry.id, entry.path)
+        }
+      } catch {
+        // 没有 paths.yaml：项目仍然列出，只是没有本机路径
+      }
+      const projects = []
+      let projectDirs = []
+      try {
+        projectDirs = readdirSync(join(kbRoot, 'projects'), { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+          .slice(0, 100)
+      } catch {
+        projectDirs = []
+      }
+      for (const id of projectDirs) {
+        const memoryDir = join(kbRoot, 'projects', id, 'memory')
+        let memories = 0
+        try {
+          memories = readdirSync(memoryDir).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md').length
+        } catch {
+          memories = 0
+        }
+        let indexLines = 0
+        try {
+          indexLines = readFileSync(join(memoryDir, 'MEMORY.md'), 'utf8').split('\n').length
+        } catch {
+          indexLines = 0
+        }
+        const localPath = entries.get(id)
+        projects.push({
+          id,
+          path: localPath ?? null,
+          // 只报「登记了且目录还在」，不替用户猜路径
+          pathExists: localPath === undefined ? null : existsSyncSafe(localPath),
+          memories,
+          indexLines,
+        })
+      }
+      let docs = 0
+      const countDocs = async (dir) => {
+        let total = 0
+        const walk = async (current) => {
+          const items = await readdir(current, { withFileTypes: true }).catch(() => [])
+          for (const item of items) {
+            const full = join(current, item.name)
+            if (item.isDirectory()) {
+              if (item.name !== 'archive') await walk(full)
+            } else if (item.name.endsWith('.md')) total++
+          }
+        }
+        await walk(dir)
+        return total
+      }
+      docs += await countDocs(join(kbRoot, 'docs'))
+      projects.sort((a, b) => a.id.localeCompare(b.id))
+      // 只列目录名，不读文档正文
+      let docDirs = []
+      try {
+        docDirs = readdirSync(join(kbRoot, 'docs'), { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+      } catch {
+        docDirs = []
+      }
+      return jsonResponse(200, { ok: true, kbRoot, projects, docs, docDirs })
+    },
+
     /** POST /api/local-kb/sync：立即同步。 */
     sync: async () => {
       const result = await runSync({ trigger: 'manual' })
@@ -1381,6 +1487,15 @@ async function skillInstalled(dshHome) {
   try {
     await access(join(dshHome, 'skills', SKILL_NAME, 'SKILL.md'), FS.F_OK)
     return true
+  } catch {
+    return false
+  }
+}
+
+/** 目录是否存在（overview 判断项目路径是否还在）。 */
+function existsSyncSafe(p) {
+  try {
+    return statSync(p).isDirectory()
   } catch {
     return false
   }
