@@ -143,6 +143,49 @@ export function isInside(root, path) {
   return kind !== 'outside' && kind !== 'unknown'
 }
 
+/** 展开命令里的 ~ 与 $HOME（只做这两种，别的变量不猜）。 */
+export function expandHome(raw, home = homedir()) {
+  if (raw === '~') return home
+  if (raw.startsWith('~/')) return join(home, raw.slice(2))
+  return raw.replace(/^\$\{?HOME\}?(?=\/|$)/, home)
+}
+
+/** 命令里出现的绝对路径 / ~ 路径 / $HOME 路径。 */
+export function commandPathTokens(command) {
+  return command.match(/(?<![A-Za-z0-9_.\-])(?:~|\$\{?HOME\}?|\/)[^\s\x22'\x60|&;<>()]*/g) || []
+}
+
+/**
+ * 写动作：重定向，或会改动文件的命令。
+ * 只看命令名，不解析参数 —— 判不出具体目标时宁可多同步一次（幂等），不要漏。
+ */
+const BASH_WRITE_PATTERN =
+  /(?<![<])>{1,2}(?![&|])|\b(?:tee|cp|mv|install|rsync|touch|mkdir|rmdir|rm|truncate|dd|ln|unlink|shred)\b|\bsed\s+-i|\bperl\s+-[a-z]*i/
+
+/**
+ * bash 命令是否会改动 KB 内文件。
+ *
+ * 旧实现用 command.includes(kbRoot)：~/.local-kb、$HOME/.local-kb、cd 后的相对路径
+ * 全漏，而 ls ~/.local-kb 这类只读命令又白白触发一次同步。现在先要求有写动作，
+ * 再按 classifyPath 判路径（软链按真实位置）。
+ */
+export function bashWritesKb(kbRoot, args) {
+  const cmd = typeof args?.command === 'string' ? args.command : ''
+  if (cmd === '' || cmd.length > 8192) return false
+  if (!BASH_WRITE_PATTERN.test(cmd)) return false
+  for (const raw of commandPathTokens(cmd)) {
+    const { kind } = classifyPath(kbRoot, expandHome(raw))
+    if (kind !== 'outside' && kind !== 'unknown') return true
+  }
+  const workdir = typeof args?.workdir === 'string' ? args.workdir.trim() : ''
+  if (workdir !== '') {
+    const { kind } = classifyPath(kbRoot, expandHome(workdir))
+    if (kind !== 'outside' && kind !== 'unknown') return true
+  }
+  // 变量拼出来的路径判不出（如 $KB/memory）：退回到文本包含，保持旧行为的下限
+  return cmd.includes(kbRoot)
+}
+
 /* =========================================================================
  * 同步状态（内存单例 + 磁盘备份，设置页可查）
  * ======================================================================= */
@@ -601,7 +644,7 @@ function runKbCheckProcess(python, script, kbRoot) {
         && (args.command === 'create' || args.command === 'str_replace' || args.command === 'insert')
         && filePath !== undefined) {
         isKbWrite = isInside(kbRoot, filePath)
-      } else if (tool === 'bash' && typeof args.command === 'string' && args.command.includes(kbRoot)) {
+      } else if (tool === 'bash' && bashWritesKb(kbRoot, args)) {
         isKbWrite = true
       }
       if (!isKbWrite) return
