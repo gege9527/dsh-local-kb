@@ -15,14 +15,14 @@
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
 import { randomUUID } from 'node:crypto'
-import { constants as FS } from 'node:fs'
+import { constants as FS, realpathSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
 import { access, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
 import http from 'node:http'
 import https from 'node:https'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { installSkill, SKILL_NAME } from './install-skill.js'
@@ -71,11 +71,76 @@ export function resolveKbRoot(env = process.env) {
   return resolve(root)
 }
 
-/** 判断 path 是否在 root 内（解析后前缀比较）。 */
+/**
+ * 路径的真实位置：自身存在就解析自身；不存在（写入新文件）就解析父目录再拼回文件名。
+ * 解析失败保持原样 —— 调用方拿到的是「尽力而为」的绝对路径，不是猜测。
+ */
+function realpathLoose(p) {
+  try {
+    return realpathSync(p)
+  } catch {
+    // 目标还不存在：解析父目录，避免符号链接把写入指向别处
+  }
+  // 逐级向上找第一个存在的祖先，解析它，再把没有创建的尾巴拼回去。
+  const tail = []
+  let dir = p
+  while (true) {
+    tail.unshift(basename(dir))
+    const parent = dirname(dir)
+    if (parent === dir) return p
+    try {
+      return join(realpathSync(parent), ...tail)
+    } catch {
+      dir = parent
+    }
+  }
+}
+
+/**
+ * 把路径归到知识库的语义分类。所有需要「这是不是 KB 内文件」「这是哪一种文件」的
+ * 判定都走这里，避免三处各写一套字符串比较（软链、~、相对路径的坑各不相同）。
+ *
+ * kind: outside | unknown | root | state | memory-index | memory-note |
+ *       project-page | project-doc | doc | other
+ */
+export function classifyPath(root, target) {
+  if (typeof root !== 'string' || root === '' || typeof target !== 'string' || target.trim() === '') {
+    return { kind: 'unknown', rel: null, path: null }
+  }
+  const base = realpathLoose(resolve(root))
+  const real = realpathLoose(resolve(target))
+  const rel = relative(base, real)
+  if (rel === '') return { kind: 'root', rel: '', path: real }
+  const parts = rel.split(sep)
+  if (parts[0] === '..' || isAbsolute(rel)) return { kind: 'outside', rel: null, path: real }
+
+  // Windows 上路径大小写不敏感：分类按折叠后的段名，rel 保留原样。
+  const cmp = process.platform === 'win32' ? parts.map((p) => p.toLowerCase()) : parts
+  const posix = parts.join('/')
+  const isIndex = (i) => cmp.length === i + 1 && cmp[i].toLowerCase() === 'memory.md'
+
+  if (posix === SYNC_STATE_FILENAME) return { kind: 'state', rel: posix, path: real }
+  if (cmp[0] === 'memory' && cmp.length >= 2) {
+    return { kind: isIndex(1) ? 'memory-index' : 'memory-note', rel: posix, path: real }
+  }
+  if (cmp[0] === 'projects' && cmp.length >= 3) {
+    if (cmp[2] === 'memory') {
+      return { kind: isIndex(3) ? 'memory-index' : 'memory-note', rel: posix, path: real }
+    }
+    if (cmp.length === 3 && cmp[2] === cmp[1] + '.md') {
+      return { kind: 'project-page', rel: posix, path: real }
+    }
+    if (cmp[2] === 'docs' && cmp.length >= 4) return { kind: 'project-doc', rel: posix, path: real }
+    return { kind: 'other', rel: posix, path: real }
+  }
+  if (cmp[0] === 'docs' && cmp.length >= 2) return { kind: 'doc', rel: posix, path: real }
+  return { kind: 'other', rel: posix, path: real }
+}
+
+/** 判断 path 是否在 root 内（经 classifyPath：解析符号链接后的真实位置）。 */
 export function isInside(root, path) {
-  const r = resolve(root)
-  const p = resolve(path)
-  return p === r || p.startsWith(r + sep)
+  const { kind } = classifyPath(root, path)
+  return kind !== 'outside' && kind !== 'unknown'
 }
 
 /* =========================================================================
