@@ -49,6 +49,13 @@ export const AGENTS_FILENAME = 'AGENTS.md'
 export const AGENTS_MARKER_START = '<!-- KB_LOCAL_START -->'
 export const AGENTS_MARKER_END = '<!-- KB_LOCAL_END -->'
 
+/** 常驻块自身带版本号：低版本才刷新，高版本（用户手改）一律不动。 */
+const BLOCK_VERSION_MARK = /<!--\s*KB_LOCAL_VERSION:\s*(\d+)\s*-->/
+export const blockVersion = (text) => {
+  const match = BLOCK_VERSION_MARK.exec(String(text))
+  return match ? Number(match[1]) : 1
+}
+
 /** Resolve `$DSH_HOME`, mirroring dsh's `resolveDshHome`: env wins, else `~/.dsh`. */
 export function resolveDshHome(env = process.env) {
   const fromEnv = env.DSH_HOME
@@ -180,8 +187,23 @@ export async function appendRulesToAgents(dshHome, payloadDir, opts = {}) {
 
   const startAt = current.indexOf(AGENTS_MARKER_START)
   if (startAt !== -1) {
-    // 块已存在：不覆盖（用户可能已手动更新为更新版本的常驻块）。只缺则补。
-    return { status: 'present', path: agentsPath }
+    const endAt = current.indexOf(AGENTS_MARKER_END, startAt)
+    if (endAt === -1) {
+      // 只有开头没有结尾：不猜，交给用户
+      return { status: 'error', path: agentsPath, detail: `${AGENTS_MARKER_START} 没有对应的 ${AGENTS_MARKER_END}` }
+    }
+    const existing = current.slice(startAt, endAt + AGENTS_MARKER_END.length)
+    // 同版本或更高版本：不动（用户可能手动改过）。低版本才刷新，且只换标记之间。
+    if (blockVersion(existing) >= blockVersion(block)) {
+      return { status: 'present', path: agentsPath }
+    }
+    const next = current.slice(0, startAt) + block + current.slice(endAt + AGENTS_MARKER_END.length)
+    try {
+      await writeFile(agentsPath, next, 'utf8')
+    } catch (error) {
+      return { status: 'error', path: agentsPath, detail: errorMessage(error) }
+    }
+    return { status: 'updated', path: agentsPath }
   }
 
   const prefix = currentExists && !current.endsWith('\n') ? '\n\n' : currentExists ? '\n' : ''

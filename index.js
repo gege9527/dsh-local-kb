@@ -25,6 +25,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url'
 
 import { installSkill, SKILL_NAME } from './install-skill.js'
+import {
+  DEFAULT_INDEX_MAX_BYTES,
+  DEFAULT_INDEX_MAX_LINES,
+  knowledgeMapText,
+  memoryIndexText,
+} from './inject.js'
 
 // 任务内提醒的消息工厂：优先用 DSH 官方 createUserMessage；解析失败（测试/非 DSH 环境）
 // 静默降级为手工构造同构对象（零硬依赖，防插件加载失败）。promise 模块级缓存，只发一次。
@@ -654,6 +660,64 @@ export function apply(ctx, config = {}) {
     ctx.tools.guard(kbGuard(kbRoot, { indexCap: config.indexCap !== false }))
   }
 
+  // ---- 每轮注入：记忆索引 + 知识地图（systemPrompt.context） ----
+  // 记忆是召回型：模型必须每轮知道记过什么，靠它自己 read 会被跳过。
+  // 知识是检索型：只注入「有哪些项目 / 当前项目是谁 / 去哪 grep」，正文永远不进上下文。
+  // dsh 每个 step 同步调用 text()，inject.js 里全是同步 IO + mtime 缓存。
+  let workingDirectory
+  ctx.inject(['workingDirectory'], (inner) => {
+    inner.effect(() => {
+      const service = inner.workingDirectory
+      workingDirectory = service
+      return () => {
+        if (workingDirectory === service) workingDirectory = undefined
+      }
+    })
+  })
+  const sessionCwd = (context) => {
+    try {
+      const dir = workingDirectory?.get(context?.agent?.session)
+      return typeof dir === 'string' && isAbsolute(dir) ? dir : undefined
+    } catch {
+      return undefined // 没有 workingDirectory 服务的 dsh 版本
+    }
+  }
+  const positiveInt = (value, fallback) => (Number.isInteger(value) && value > 0 ? value : fallback)
+  if (config.injectContext !== false) {
+    const cache = new Map()
+    const maxLines = positiveInt(config.injectMaxLines, DEFAULT_INDEX_MAX_LINES)
+    const maxBytes = positiveInt(config.injectMaxBytes, DEFAULT_INDEX_MAX_BYTES)
+    ctx.inject(['systemPrompt'], (inner) => {
+      const prompt = inner.systemPrompt
+      if (typeof prompt?.context !== 'function') return
+      // 索引按原文引用，不参与 {{}} 插值：笔记标题里出现花括号会让整个请求失败。
+      inner.effect(() => prompt.context({
+        name: 'local-kb:memory',
+        order: 300,
+        interpolate: false,
+        text: (context) => {
+          try {
+            return memoryIndexText({ kbRoot, cwd: sessionCwd(context), cache, maxLines, maxBytes })
+          } catch {
+            return '' // 注入失败绝不拖垮请求
+          }
+        },
+      }))
+      inner.effect(() => prompt.context({
+        name: 'local-kb:map',
+        order: 301,
+        interpolate: false,
+        text: (context) => {
+          try {
+            return knowledgeMapText({ kbRoot, cwd: sessionCwd(context), cache })
+          } catch {
+            return ''
+          }
+        },
+      }))
+    })
+  }
+
   // ---- 写入即同步 hook：tools/result 监听（核心） ----
   const syncState = new SyncState(kbRoot)
   let syncChain = syncState.ready.then(() => {}) // 串行化：同一时刻最多一个同步任务
@@ -901,7 +965,10 @@ function runKbCheckProcess(python, script, kbRoot) {
       // 知识库没有覆盖项目/文档的总索引（只有记忆有 MEMORY.md），
       // 所以这里不能说「知识库有索引」——那是错误的定位信息。
       global: '全盘扫描开销大。KB 没命中可以换关键词再搜一次（项目页/文档是中文正文，别名在 frontmatter）；仍无结果再全盘搜索。',
-      memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：先 read ' + kbRoot + '/memory/MEMORY.md（提项目再读 projects/<id>/memory/MEMORY.md）。不涉及记忆可忽略本提示。',
+      // 索引通常已由插件注入；提醒只在「没看到注入内容」时有意义。
+      memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：' +
+        '上下文里已有「知识库记忆（已注入）」就直接用；没看到时 read ' + kbRoot + '/memory/MEMORY.md' +
+        '（提项目再读 projects/<id>/memory/MEMORY.md）。不涉及记忆可忽略本提示。',
       web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
     }
     const summaryOf = { global: '提示：本地检索优先用知识库', memory: '记忆先行：先读 KB memory/MEMORY.md', web: '提示：本地问题先查知识库' }

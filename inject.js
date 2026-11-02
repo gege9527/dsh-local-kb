@@ -1,0 +1,208 @@
+/**
+ * inject.js — 每轮放进 dsh runtime context 的「记忆索引 + 知识地图」。
+ *
+ * 两条不同的数据，两种不同的注入理由：
+ *
+ *  - 记忆（memory/MEMORY.md、projects/<id>/memory/MEMORY.md）是**召回型**：模型必须
+ *    每轮知道「记过什么」，靠自己去 read 会被跳过，所以整份注入，按上限截断。
+ *  - 知识（25 个项目页、408 个文档）是**检索型**：正文永远不注入，只注入「地图」——
+ *    有哪些项目、当前项目是谁、它的文档目录叫什么。让模型知道去哪 grep，而不是替它读。
+ *
+ * dsh 每个 step 同步调用 context.text()，所以这里只用同步 IO，并按 mtime/size 缓存：
+ * 一次 step 的代价是几次 stat，不是几次 readFile。
+ */
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, resolve, sep } from 'node:path'
+
+/** 同一份文件在这个窗口内不重复 stat（dsh 每步都会问一次）。 */
+const RECHECK_MS = 10_000
+/** 单个索引注入上限：超过就截断并提示压缩。 */
+export const DEFAULT_INDEX_MAX_LINES = 80
+export const DEFAULT_INDEX_MAX_BYTES = 8 * 1024
+/** 索引文件大到这个程度就不读（不是记忆索引该有的体量）。 */
+const INDEX_READ_LIMIT = 1024 * 1024
+/** 地图里最多列几个项目 id / 文档目录名。 */
+const MAP_MAX_PROJECTS = 60
+const MAP_MAX_DOCS = 8
+
+/**
+ * 解析 paths.yaml —— 只认本插件自己写的那两种缩进（id: / path: / git_remote:），
+ * 不引入 YAML 依赖，也不猜锚点、多行标量这些用不到的语法。
+ */
+export function parsePathsYaml(text) {
+  const out = []
+  let current
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\s+$/, '')
+    if (line === '' || line.startsWith('#')) continue
+    const head = line.match(/^([A-Za-z0-9_.-]+):\s*$/)
+    if (head) {
+      current = { id: head[1], path: undefined }
+      out.push(current)
+      continue
+    }
+    const field = line.match(/^\s+([A-Za-z_]+):\s*(.*)$/)
+    if (!field || current === undefined) continue
+    const value = field[2].trim().replace(/^["']|["']$/g, '')
+    if (field[1] === 'path' && value !== '') current.path = value
+  }
+  return out.filter((entry) => entry.path !== undefined)
+}
+
+/** cwd 落在哪个项目（最长前缀），没有就 undefined。 */
+export function projectForPath(cwd, entries) {
+  if (typeof cwd !== 'string' || cwd === '') return undefined
+  const target = resolve(cwd)
+  let best
+  for (const entry of entries) {
+    const root = resolve(entry.path)
+    if (target === root || target.startsWith(root + sep)) {
+      if (best === undefined || root.length > best.root.length) best = { ...entry, root }
+    }
+  }
+  return best
+}
+
+/** 带 mtime/size 缓存的同步读；读不到返回 undefined。 */
+function readCached(path, cache) {
+  const now = Date.now()
+  const hit = cache.get(path)
+  if (hit !== undefined && now - hit.at < RECHECK_MS) return hit.value
+  let value
+  try {
+    const st = statSync(path)
+    if (!st.isFile() || st.size > INDEX_READ_LIMIT) {
+      value = undefined
+    } else {
+      value = { text: readFileSync(path, 'utf8'), mtimeMs: st.mtimeMs, size: st.size }
+    }
+  } catch {
+    value = undefined
+  }
+  cache.set(path, { at: now, value })
+  return value
+}
+
+/** 只保留前面的整行，直到行数或字节任一上限。 */
+export function truncateIndex(text, maxLines = DEFAULT_INDEX_MAX_LINES, maxBytes = DEFAULT_INDEX_MAX_BYTES) {
+  const lines = String(text).split('\n')
+  const kept = []
+  let bytes = 0
+  for (const line of lines) {
+    if (kept.length >= maxLines) return { text: kept.join('\n'), cut: true }
+    const size = Buffer.byteLength(line, 'utf8') + (kept.length === 0 ? 0 : 1)
+    if (bytes + size > maxBytes) return { text: kept.join('\n'), cut: true }
+    kept.push(line)
+    bytes += size
+  }
+  return { text: kept.join('\n'), cut: false }
+}
+
+const rel = (kbRoot, path) => path.startsWith(kbRoot + sep) ? path.slice(kbRoot.length + 1) : path
+
+/**
+ * 记忆索引段：全局 + 当前项目。返回空串表示没有任何索引（不注入空标题）。
+ */
+export function memoryIndexText({
+  kbRoot,
+  cwd,
+  cache = new Map(),
+  maxLines = DEFAULT_INDEX_MAX_LINES,
+  maxBytes = DEFAULT_INDEX_MAX_BYTES,
+}) {
+  const parts = []
+  const read = (path, label) => {
+    const file = readCached(path, cache)
+    if (file === undefined || file.text.trim() === '') return
+    const cut = truncateIndex(file.text, maxLines, maxBytes)
+    parts.push(`### ${label} · ${rel(kbRoot, path)}\n` + cut.text + (cut.cut ? '\n（索引超过注入上限，已截断；先压缩索引再追加）' : ''))
+  }
+
+  read(join(kbRoot, 'memory', 'MEMORY.md'), '全局记忆')
+
+  const entries = pathsEntries(kbRoot, cache)
+  const project = projectForPath(cwd, entries)
+  if (project !== undefined) {
+    read(join(kbRoot, 'projects', project.id, 'memory', 'MEMORY.md'), `项目记忆 ${project.id}`)
+  }
+
+  if (parts.length === 0) return ''
+  return '## 知识库记忆（已注入，不必再 read 索引文件；需要细节再打开对应笔记）\n\n' + parts.join('\n\n')
+}
+
+/** paths.yaml 的缓存读取（项目清单与当前项目都靠它）。 */
+function pathsEntries(kbRoot, cache) {
+  const file = readCached(join(kbRoot, 'paths.yaml'), cache)
+  if (file === undefined) return []
+  return parsePathsYaml(file.text)
+}
+
+/** 项目页 frontmatter 的 description（只读开头一小段，不整份读）。 */
+function projectDescription(pagePath, cache) {
+  const file = readCached(pagePath, cache)
+  if (file === undefined) return undefined
+  const head = file.text.slice(0, 4096)
+  const match = head.match(/^description:\s*(.+)$/m)
+  return match ? match[1].trim().replace(/^["']|["']$/g, '') : undefined
+}
+
+/** 项目的 docs/ 目录名清单（只列名字，不读文档）。 */
+function projectDocNames(kbRoot, id) {
+  try {
+    return readdirSync(join(kbRoot, 'projects', id, 'docs'), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+      .map((entry) => entry.name.replace(/\.md$/i, ''))
+      .slice(0, MAP_MAX_DOCS)
+  } catch {
+    return []
+  }
+}
+
+/** 跨项目 docs/ 的目录名（顶层分类，不递归）。 */
+function globalDocDirs(kbRoot) {
+  try {
+    return readdirSync(join(kbRoot, 'docs'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 知识地图：让模型知道 KB 里有什么、当前项目是哪个、去哪查。
+ * 不注入任何文档正文。
+ */
+export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
+  const entries = pathsEntries(kbRoot, cache)
+  const projectsDir = join(kbRoot, 'projects')
+  let dirs = []
+  try {
+    dirs = readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+  } catch {
+    return ''
+  }
+  const mapped = new Set(entries.map((entry) => entry.id))
+  const missing = dirs.filter((id) => !mapped.has(id))
+  const ids = dirs.slice(0, MAP_MAX_PROJECTS)
+
+  const lines = [`## 知识库地图 · ${kbRoot}`]
+  lines.push(`项目（${dirs.length}）：` + ids.join('、') + (dirs.length > ids.length ? ' …' : ''))
+  if (missing.length > 0) lines.push(`缺本机路径（paths.yaml 未登记）：` + missing.join('、'))
+
+  const project = projectForPath(cwd, entries)
+  if (project !== undefined) {
+    lines.push(`当前项目：${project.id} → ${project.root}`)
+    const description = projectDescription(join(kbRoot, 'projects', project.id, project.id + '.md'), cache)
+    if (description !== undefined) lines.push('  概览：' + description)
+    const docs = projectDocNames(kbRoot, project.id)
+    if (docs.length > 0) lines.push('  文档：' + docs.join('、'))
+  } else if (cwd !== undefined) {
+    lines.push('当前目录不在任何已登记项目内：按关键词检索，别猜项目。')
+  }
+
+  const docDirs = globalDocDirs(kbRoot)
+  if (docDirs.length > 0) lines.push('跨项目文档：' + docDirs.join('、'))
+  lines.push(`检索：grep -rn "关键词" ${join(kbRoot, 'projects', '*', '*.md')} ${join(kbRoot, 'docs')}`)
+  return lines.join('\n')
+}
