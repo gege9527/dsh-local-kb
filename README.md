@@ -36,6 +36,23 @@ WebDAV 链接、用户名、密码全部存 DSH `credentials` 服务（`$DSH_HOM
 3. 配置 WebDAV 链接/用户名/密码 → 测试链接 → 保存。
 4. AI 向 `~/.local-kb/` 写入即自动同步；可在设置页点击「立即同步」。
 
+## 知识库优先门禁（v2，2026-10）
+
+插件不再替模型判断「该不该查知识库」，判定权交给常驻块 M/K/W 规则；插件只留确定性兜底：
+
+| 场景 | 行为 |
+|---|---|
+| web_search / web_fetch | 永不拦（外部知识不归 KB 管）；本 agent 未查过 KB 时，首次事后附一条 KB 提示 |
+| find / locate / mdfind | 永不拦（KB 无文件清单） |
+| read 任意路径 / 工作区内搜索 / home 一级目录（~/Documents 等） | 永不拦（定点访问 = 知道去哪） |
+| grep/rg 目标 = `/` 或整个 home | 仅当本 agent 从未查过 KB 时拦一次（唯一硬闸）；查过即永不再拦 |
+| 记忆检索 | 无条件必走 KB：memory 未读时，首次本地读/搜后附记忆提醒（每任务 1 次，用户新消息重置） |
+
+- 状态 per-agent（WeakMap，随 agent 回收）：跨会话/子代理互不影响
+- 提醒是 post-execute 附加上下文（form: notice），不 deny、不重写结果、零打断
+- 异常安全：门禁内部任何错误 → 放行；`DSH_LOCAL_KB_ENFORCE=0` 总闸
+- Windows：路径判定退化为软规则（不假装支持盘符解析）
+
 ## 开发
 
 - `index.js`：Host 半（技能安装、写入钩子、WebDAV、HTTP API）

@@ -14,6 +14,7 @@
  *
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
+import { randomUUID } from 'node:crypto'
 import { constants as FS } from 'node:fs'
 import { readFileSync } from 'node:fs'
 import { access, readFile, readdir, stat, writeFile } from 'node:fs/promises'
@@ -21,10 +22,14 @@ import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
 import http from 'node:http'
 import https from 'node:https'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { installSkill, SKILL_NAME } from './install-skill.js'
+
+// 任务内提醒的消息工厂：优先用 DSH 官方 createUserMessage；解析失败（测试/非 DSH 环境）
+// 静默降级为手工构造同构对象（零硬依赖，防插件加载失败）。promise 模块级缓存，只发一次。
+const reminderFactory = import('@deepseek-ai/dsh-llm').then((m) => m.createUserMessage, () => null)
 
 export const name = 'local-kb'
 
@@ -544,53 +549,169 @@ function runKbCheckProcess(python, script, kbRoot) {
     }
   })
 
-  // ---- KB-first 门禁 hook：tools/pre-execute ----
-  // 状态机（取代字符串白名单）：grep KB / read KB 内文件 → 解锁全局搜索，窗口 =
-  // KB_GATE_STEPS 次搜索或 KB_GATE_TTL_MS 毫秒，耗尽强制重查；定点命令（ls/cat/
-  // git/curl…）与写入工具不拦；DSH_LOCAL_KB_ENFORCE=0 逃生门。
-  // 设计全文与取舍（含旧实现缺陷、防绕动机、放行清单）见 local-kb 记忆
-  // 「kb-first-gate-state-machine.md」。
+  // ---- KB-first 门禁 hook：tools/pre-execute（唯一硬闸）+ tools/post-execute（不打断提醒）----
+  // v2（2026-10）判定权交给模型（常驻块 M/K/W 规则），插件只留「无可争议」的硬闸：
+  //   - 唯一硬闸：grep/rg **内容搜索**的目标 = 根 / 或 home 本身（无差别全盘扫描，
+  //     AI 必然不知道去哪），且本 agent 从未查过 KB → deny 一次；
+  //   - 永不拦：web_search/web_fetch（外部知识不归 KB 管）、find/locate/mdfind（KB 无文件清单）、
+  //     codegraph（项目内）、read 任意路径（定点访问=知道去哪）、home 一级目录
+  //     （~/Documents、~/projects… 有位置语义，误伤 > 漏拦）、工作区内搜索、写入工具；
+  //   - 状态 per-agent（WeakMap，随 agent 回收，零清理代码）：kbChecked=查过 KB →
+  //     该 agent 永不再拦全盘搜索；memoryChecked=碰过 KB 记忆区（只 grep docs 不算）；
+  //     reminded=任务内提醒计数（每类 1 次，用户新消息经 agent/pre-step 重置）；
+  //   - 性能：全程同步字符串判定，零 IO；bash token 解析只发生在命令含 grep/rg 时；
+  //     超长命令（>8192）跳过判定；handler 绝无 await 外部调用；
+  //   - 异常安全：任何内部错误 → next() 放行（门禁宁可失效不可误伤）；
+  //   - DSH_LOCAL_KB_ENFORCE=0 总闸。
   {
-    const KB_GATE_STEPS = 12
-    const KB_GATE_TTL_MS = 15 * 60 * 1000
-    const gate = { checkedAt: 0, calls: 0 }   // 进程生命周期内的单例状态
-    const isKbGrep = (cmd) => /\b(grep|rg|find)\b/.test(cmd) && cmd.includes(kbRoot)
-    const unlocked = () => gate.checkedAt > 0 && Date.now() - gate.checkedAt < KB_GATE_TTL_MS && gate.calls < KB_GATE_STEPS
-    const kbDeny = (act) => ({ kind: 'deny', reason: '先查知识库：grep -rn "<关键词>" ' + kbRoot + '/projects/*/*.md ' + kbRoot + '/docs/ 或 read KB 内文件；KB 未命中才能' + act + '。查过 KB 后本窗口自动放行' })
+    const home = homedir()
+    const MAX_CMD = 8192
+    /** macOS APFS：/System/Volumes/Data 前缀等价于真实根 /（含 /Users → home）。 */
+    const normalizePath = (p) => {
+      if (p === '/System/Volumes/Data') return '/'
+      return p.startsWith('/System/Volumes/Data/') ? p.slice('/System/Volumes/Data'.length) : p
+    }
+    /** ~ 前缀（或单独的 ~）展开成绝对路径。 */
+    const expand = (raw) => raw === '~' ? home : raw.startsWith('~/') ? join(home, raw.slice(2)) : raw
+
+    /** per-agent 状态（WeakMap：键是 Agent 实例，GC 随 agent 回收，无 Map 泄漏/清理事件）。 */
+    const states = new WeakMap()
+    const stateOf = (agent) => {
+      if (!agent || typeof agent !== 'object') return null
+      let st = states.get(agent)
+      if (!st) {
+        st = { kbChecked: false, memoryChecked: false, reminded: { global: false, memory: false, web: false } }
+        states.set(agent, st)
+      }
+      return st
+    }
+
+    /** 路径是否落在 KB（含 ~/.local-kb 简写兜底）。 */
+    const touchesKb = (s) => typeof s === 'string' && s !== '' &&
+      (s.includes(kbRoot) || (kbRoot.includes('.local-kb') && s.includes('.local-kb')))
+
+    /** 记录 KB 认知：kbChecked 必置；路径真实碰过记忆区才置 memoryChecked。 */
+    const noteKbHit = (st, s) => {
+      if (!st) return
+      st.kbChecked = true
+      if (touchesKb(s) && s.includes('/memory/')) st.memoryChecked = true
+    }
+
+    /** 截取搜索命令段：管道/分号/与之前的非搜索命令不解析。只认 grep/rg（内容搜索）——
+     *  find/locate/mdfind 永不判定（KB 没有文件清单，拦了答非所问）。 */
+    const searchSegment = (cmd) => {
+      const m = cmd.match(/\b(?:grep|rg)\b[^|;&\n]*/)
+      return m ? m[0] : ''
+    }
+    /** 搜索段内的全部显式目标（绝对路径 token + workdir），KB 内目标不算。 */
+    const bashTargets = (cmd, args) => {
+      const out = []
+      const toks = cmd.match(/(?<![A-Za-z0-9_.-])(?:~(?:\/|(?=[\s"'`|&;<>()]|$))|\/)(?!\/)[^\s"'`|&;<>()]*/g) || []
+      for (const t of toks) {
+        const e = expand(t)
+        if (isAbsolute(e) && !isInside(kbRoot, e)) out.push(e)
+      }
+      const workdir = typeof args?.workdir === 'string' && args.workdir.trim() !== '' ? expand(args.workdir) : ''
+      if (workdir !== '' && !isInside(kbRoot, workdir)) out.push(workdir)
+      return out
+    }
+    /** 唯一硬闸判定：grep/rg 的目标（归一后）落在根或 home 本身。 */
+    const isGlobalSearch = (cmd, args) => bashTargets(searchSegment(cmd), args).some((t) => {
+      const n = normalizePath(t)
+      return n === '/' || n === home
+    })
+
+    // ---- 任务内提醒（post-execute 附加上下文；不 deny、不重写结果、零打断）----
+    const kbGrep = 'grep -rn "关键词" ' + kbRoot + '/projects/*/*.md ' + kbRoot + '/docs/'
+    const reminderTexts = {
+      global: '全盘扫描开销大。若在找本地项目/代码/文档，知识库有索引：' + kbGrep + '，未命中再全盘搜索。',
+      memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：先 read ' + kbRoot + '/memory/MEMORY.md（提项目再读 projects/<id>/memory/MEMORY.md）。不涉及记忆可忽略本提示。',
+      web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
+    }
+    const summaryOf = { global: '提示：本地检索优先用知识库', memory: '记忆先行：先读 KB memory/MEMORY.md', web: '提示：本地问题先查知识库' }
+    const makeReminder = async (text, summary) => {
+      const create = await reminderFactory
+      const msg = { role: 'user', content: [{ type: 'text', text }], source: { kind: 'local-kb-reminder', form: 'notice', summary } }
+      return create ? create({ ...msg }) : { ...msg, id: randomUUID() }
+    }
 
     ctx.on('tools/pre-execute', async (exec, next) => {
-      const tool = exec.name
-      if (!['bash', 'read', 'web_search', 'web_fetch', 'codegraph'].includes(tool)) return next()
-      if (process.env.DSH_LOCAL_KB_ENFORCE === '0') return next()
-
-      if (tool === 'bash') {
-        const cmd = typeof exec.arguments?.command === 'string' ? exec.arguments.command : ''
-        // 查 KB 本身 → 放行；若是 grep KB 则刷新解锁窗口
-        if (cmd.includes(kbRoot) || /\.local-kb/.test(cmd)) {
-          if (isKbGrep(cmd)) { gate.checkedAt = Date.now(); gate.calls = 0 }
+      try {
+        if (process.env.DSH_LOCAL_KB_ENFORCE === '0') return next()
+        const tool = exec.name
+        if (tool === 'bash') {
+          const args = exec.arguments
+          const cmd = typeof args?.command === 'string' ? args.command : ''
+          const st = stateOf(exec.agent)
+          if (touchesKb(cmd)) { noteKbHit(st, cmd); return next() } // KB 操作放行 + 刷新认知
+          if (cmd.length > MAX_CMD) return next()                    // 超长命令跳过判定
+          if (st && isGlobalSearch(cmd, args) && !st.kbChecked) {   // 唯一硬闸（无 agent 直调永不拦）
+            return {
+              kind: 'deny',
+              reason: '先查知识库：' + kbGrep + ' 或 read KB 内文件；KB 未命中再全盘搜索' +
+                (st && !st.memoryChecked ? '。涉及记忆先 read ' + kbRoot + '/memory/MEMORY.md' : '') +
+                '。本会话查过 KB 后放行',
+            }
+          }
           return next()
         }
-        // 全局搜索型命令 → 受窗口约束；其余具名命令视为定点访问，不拦
-        if (/\b(grep|rg|find)\b/.test(cmd)) {
-          if (unlocked()) { gate.calls += 1; return next() }
-          return kbDeny('搜索源项目')
+        if (tool === 'read') {
+          const st = stateOf(exec.agent)
+          const p = typeof exec.arguments?.file_path === 'string' ? exec.arguments.file_path : ''
+          if (touchesKb(p)) noteKbHit(st, p)
+          return next() // read 有明确路径 = 定点访问，永不拦
         }
+        // 其余（web_search/web_fetch/codegraph/find/写入工具…）永不拦
         return next()
+      } catch {
+        return next() // 门禁宁可失效不可误伤
       }
-      if (tool === 'read') {
-        const filePath = typeof exec.arguments?.file_path === 'string' ? exec.arguments.file_path : ''
-        // read KB 内文件 = 查 KB，刷新窗口
-        if (filePath.includes(kbRoot) || /\.local-kb/.test(filePath)) {
-          gate.checkedAt = Date.now(); gate.calls = 0
-          return next()
+    })
+
+    ctx.on('tools/post-execute', async (exec, _result, next) => {
+      const decision = await next() // 先让下游/结果定型，再叠加提醒
+      try {
+        if (process.env.DSH_LOCAL_KB_ENFORCE === '0') return decision
+        const st = stateOf(exec.agent)
+        if (!st) return decision
+        const tool = exec.name
+        const args = exec.arguments
+        let reminder = null
+        if (tool === 'web_search' || tool === 'web_fetch') {
+          if (!st.kbChecked && !st.reminded.web) { reminder = await makeReminder(reminderTexts.web, summaryOf.web); st.reminded.web = true }
+        } else if (tool === 'bash') {
+          const cmd = typeof args?.command === 'string' ? args.command : ''
+          if (!touchesKb(cmd) && cmd.length <= MAX_CMD) {
+            if (!st.memoryChecked && !st.reminded.memory && /\b(grep|rg|find)\b/.test(cmd)) {
+              reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); st.reminded.memory = true
+            } else if (st.kbChecked && isGlobalSearch(cmd, args) && !st.reminded.global) {
+              reminder = await makeReminder(reminderTexts.global, summaryOf.global); st.reminded.global = true
+            }
+          }
+        } else if (tool === 'read') {
+          const p = typeof args?.file_path === 'string' ? args.file_path : ''
+          if (!touchesKb(p) && !st.memoryChecked && !st.reminded.memory) {
+            reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); st.reminded.memory = true
+          }
         }
-        if (unlocked()) { gate.calls += 1; return next() }
-        return kbDeny('读源码')
+        if (!reminder) return decision
+        if (decision.kind === 'block') {
+          return { kind: 'block', feedback: decision.feedback, additionalContexts: [reminder, ...(decision.additionalContexts ?? [])] }
+        }
+        return { ...decision, additionalContexts: [reminder, ...(decision.additionalContexts ?? [])] }
+      } catch {
+        return decision
       }
-      // web_search / web_fetch / codegraph：必然型外搜，受同一窗口约束
-      if (unlocked()) { gate.calls += 1; return next() }
-      return kbDeny('搜索源项目或网络')
-    }, { prepend: true })
+    })
+
+    // 新用户消息 = 新任务 → 重新武装任务内提醒（KB 认知标记保留：查过就是查过）
+    ctx.on('agent/pre-step', async ({ agent, messages }, next) => {
+      const st = stateOf(agent)
+      if (st && messages.some((m) => m && m.source && m.source.kind === 'user')) {
+        st.reminded = { global: false, memory: false, web: false }
+      }
+      return next()
+    })
   }
 
   // ---- 设置页 HTTP API（静态插件的 Client↔Host 通道：webServer 路由 + fetch） ----
@@ -714,3 +835,5 @@ function json(res, status, value) {
   })
   res.end(JSON.stringify(value) + '\n')
 }
+
+

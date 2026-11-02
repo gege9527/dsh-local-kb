@@ -50,5 +50,8 @@
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "test:gate": "node tests/gate.spec.mjs"
   }
 }
