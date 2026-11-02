@@ -1344,18 +1344,16 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       { path: API_BASE + '/sync', methods: ['POST'], requestBody: 'buffered', fetch: handlers.sync },
       { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
     ]
-    const report = { at: new Date().toISOString(), routes: [] }
+    const failures = []
     for (const route of routes) {
       scope.effect(() => {
         try {
-          const dispose = register(route)
-          report.routes.push({ path: route.path, ok: true })
-          writeRouteDebug(dshHome, report)
-          return dispose
+          return register(route)
         } catch (error) {
-          // 同路径已被别的行占用：不注册，页面拿到 404 而不是把请求交给别人
-          report.routes.push({ path: route.path, ok: false, error: String(error?.message ?? error) })
-          writeRouteDebug(dshHome, report)
+          // 同路径已被别的行占用：不注册，页面拿到 404 而不是把请求交给别人。
+          // 只在失败时留证据，正常启动不产生任何文件。
+          failures.push({ path: route.path, error: String(error?.message ?? error) })
+          writeRouteDebug(dshHome, { at: new Date().toISOString(), failures })
           return () => {}
         }
       }, 'local-kb: route ' + route.path)
