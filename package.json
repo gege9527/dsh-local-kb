@@ -52,10 +52,11 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "test": "node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs",
+    "test": "node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs",
     "test:gate": "node tests/gate.spec.mjs",
     "test:inject": "node tests/inject.spec.mjs",
     "test:agents": "node tests/agents-block.spec.mjs",
+    "test:mirror": "node tests/mirror.spec.mjs",
     "test:api": "node tests/api.spec.mjs",
     "test:path": "node tests/path.spec.mjs",
     "test:bash": "node tests/bash.spec.mjs",

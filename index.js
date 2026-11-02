@@ -14,9 +14,9 @@
  *
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants as FS, readFileSync, realpathSync, statSync } from 'node:fs'
-import { access, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
 import http from 'node:http'
@@ -56,6 +56,8 @@ export const SYNC_STATE_DEFAULT = {
   lastError: null,       // 可读错误
   lastTrigger: null,     // 'auto' | 'manual' | 'test' | null
   syncedFiles: 0,
+  deletedFiles: 0,     // 本次远端镜像删掉的文件数
+  failedDeletes: 0,    // 本次删除失败数（下次镜像自然重试）
   lastCheckAt: null,     // kb-check.py 最近一次运行时间（技能铁律：写入后必校验）
   lastCheckStatus: null, // 'ok' | 'warn' | 'failed' | null
   lastCheckError: null,  // 校验输出的错误行
@@ -354,35 +356,135 @@ export function kbGuard(kbRoot, { indexCap = true } = {}) {
 /* =========================================================================
  * 同步状态（内存单例 + 磁盘备份，设置页可查）
  * ======================================================================= */
+/** 分片键：按一级目录切，projects 再按项目 id 切。 */
+function shardOf(rel) {
+  const parts = rel.split('/')
+  if (parts.length === 1) return '_root'
+  if (parts[0] === 'projects' && parts.length > 1) return 'projects__' + parts[1]
+  return parts[0]
+}
+
+/**
+ * 同步状态：meta（时间/结果）一个文件，fileMap 按目录分片。
+ *
+ * 旧版把 771 条基准塞进一个 106KB 的 JSON，每次同步整份重写。分片后改一个文件
+ * 只写它所在的那一片。旧文件只读迁移、不删除（删除只由用户做）。
+ */
 class SyncState {
-  constructor(kbRoot) {
+  constructor(kbRoot, dshHome) {
     this.kbRoot = kbRoot
     this.state = { ...SYNC_STATE_DEFAULT }
-    this.file = join(kbRoot, SYNC_STATE_FILENAME)
+    this.legacyFile = join(kbRoot, SYNC_STATE_FILENAME)
+    this.dir = join(dshHome, 'local-kb', 'state', hashOf(kbRoot))
+    this.metaFile = join(this.dir, 'meta.json')
+    this.map = new Map()
+    this.shardCache = new Map()
     this.ready = this.load()
   }
+
   async load() {
     try {
-      const raw = await readFile(this.file, 'utf8')
-      const parsed = JSON.parse(raw)
-      this.state = { ...SYNC_STATE_DEFAULT, ...parsed }
+      this.state = { ...SYNC_STATE_DEFAULT, ...JSON.parse(await readFile(this.metaFile, 'utf8')) }
     } catch {
-      // 无状态文件 = 从未同步，保持默认
+      // 还没同步过
+    }
+    try {
+      const files = await listJsonFiles(this.dir)
+      for (const file of files) {
+        if (file.endsWith('meta.json')) continue
+        const obj = JSON.parse(await readFile(file, 'utf8'))
+        const shard = basename(file, '.json')
+        this.shardCache.set(shard, JSON.stringify(obj))
+        for (const [rel, info] of Object.entries(obj)) this.map.set(rel, info)
+      }
+    } catch {
+      // 分片目录还不存在
+    }
+    // 旧版单文件：只读迁移，文件本身保留
+    if (this.map.size === 0) {
+      try {
+        const legacy = JSON.parse(await readFile(this.legacyFile, 'utf8'))
+        for (const [rel, info] of Object.entries(legacy.fileMap || {})) this.map.set(rel, info)
+      } catch {
+        // 没有旧状态
+      }
     }
   }
+
   snapshot() {
     return { ...this.state }
   }
+
+  fileMapObject() {
+    return Object.fromEntries(this.map)
+  }
+
   async record(patch) {
     this.state = { ...this.state, ...patch }
-    const tmp = this.file + '.tmp'
     try {
+      await mkdir(this.dir, { recursive: true })
+      const tmp = this.metaFile + '.tmp'
       await writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf8')
-      await import('node:fs/promises').then(({ rename }) => rename(tmp, this.file))
+      await rename(tmp, this.metaFile)
     } catch {
       // 状态写盘失败不影响功能 —— 下次有 sync 再试
     }
   }
+
+  /** 只写变化的分片；消失的分片写空对象（不删文件）。 */
+  async saveFileMap(map) {
+    const grouped = new Map()
+    for (const [rel, info] of map) {
+      const shard = shardOf(rel)
+      if (!grouped.has(shard)) grouped.set(shard, {})
+      grouped.get(shard)[rel] = info
+    }
+    try {
+      await mkdir(this.dir, { recursive: true })
+    } catch {
+      return
+    }
+    for (const [shard, obj] of grouped) {
+      const text = JSON.stringify(obj)
+      if (this.shardCache.get(shard) === text) continue
+      try {
+        await writeFile(join(this.dir, shard + '.json'), text, 'utf8')
+        this.shardCache.set(shard, text)
+      } catch {
+        // 单个分片写失败：下次再写
+      }
+    }
+    for (const [shard, text] of this.shardCache) {
+      if (grouped.has(shard) || text === '{}') continue
+      try {
+        await writeFile(join(this.dir, shard + '.json'), '{}', 'utf8')
+        this.shardCache.set(shard, '{}')
+      } catch {
+        // 同上
+      }
+    }
+    this.map = new Map(map)
+  }
+}
+
+/** 状态目录按 KB 路径区分：一台机器可能有多个 KB_ROOT。 */
+function hashOf(text) {
+  return createHash('sha256').update(resolve(text)).digest('hex').slice(0, 16)
+}
+
+/** 递归列出目录下的 *.json；目录不存在返回空。 */
+async function listJsonFiles(dir) {
+  const out = []
+  const walk = async (current) => {
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else if (entry.isFile() && entry.name.endsWith('.json')) out.push(full)
+    }
+  }
+  await walk(dir)
+  return out
 }
 
 /* =========================================================================
@@ -517,7 +619,7 @@ async function ensureRemoteDirChain(base, relDir, auth) {
  *  - 目录用 MKCOL 逐级保证存在；
  *  - 成功后把本次清单写回状态文件（作为下次基准）。
  */
-export async function syncRoot({ kbRoot, url, user, password, state }) {
+export async function syncRoot({ kbRoot, url, user, password, previousMap }) {
   const rootBase = url.replace(/\/+$/, '')
   const base = rootBase + '/' + REMOTE_SYNC_DIR
   const auth = basicAuth(user, password)
@@ -532,16 +634,15 @@ export async function syncRoot({ kbRoot, url, user, password, state }) {
     _confirmedDirs.add(base)
   }
 
-  const files = await listFiles(kbRoot)
-  const previous = new Map(Object.entries((state && state.fileMap) || {}))
+  const files = await listFiles(kbRoot) // 相对路径，垃圾文件已排除
+  const previous = new Map(Object.entries(previousMap || {}))
   const now = new Map()
   const pushed = []
 
   // 阶段一：扫描对比（无 I/O 网络），找出需要上传的文件
   const pending = []
-  for (const abs of files) {
-    const rel = relative(kbRoot, abs).split(sep).join('/')
-    if (rel === SYNC_STATE_FILENAME) continue // 状态文件本身不同步
+  for (const rel of files) {
+    const abs = join(kbRoot, rel)
     let info
     try {
       info = await stat(abs)
@@ -579,10 +680,38 @@ export async function syncRoot({ kbRoot, url, user, password, state }) {
     now.set(rel, key)
   })
 
-  return { pushed, total: files.length, fileMap: Object.fromEntries(now) }
+  // 阶段三：远端镜像 —— 远端有、本地没有的一律删除（本地什么样，远端什么样）。
+  const remote = await listRemote({ base, auth })
+  const local = new Set(now.keys())
+  const stale = [...remote].filter((rel) => !local.has(rel))
+  const deleted = []
+  const failedDeletes = []
+  await mapLimit(stale, 4, async (rel) => {
+    try {
+      await deleteRemote(base, rel, auth)
+      deleted.push(rel)
+    } catch (error) {
+      failedDeletes.push({ rel, reason: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  return { pushed, deleted, failedDeletes, total: files.length, fileMap: Object.fromEntries(now) }
 }
 
-/** 递归列出 KB_ROOT 下所有文件（忽略目录、符号链接）。 */
+/**
+ * 同步排除清单：系统垃圾与插件自身状态。
+ * 排除项视同「本地不存在」——远端若有同名文件，镜像阶段会删掉，否则远端永远脏。
+ */
+const SYNC_EXCLUDE = [
+  /\.DS_Store$/i,
+  /(^|\/)\._/,
+  /\.tmp$/i,
+  /(^|\/)Thumbs\.db$/i,
+  /(^|\/)\.kb-sync-state\.json$/,
+]
+const isSyncExcluded = (rel) => SYNC_EXCLUDE.some((re) => re.test(rel))
+
+/** 递归列出 KB_ROOT 下所有文件，返回相对路径（忽略目录、符号链接与排除项）。 */
 async function listFiles(root) {
   const out = []
   const walk = async (dir) => {
@@ -590,11 +719,96 @@ async function listFiles(root) {
     for (const entry of entries) {
       const full = join(dir, entry.name)
       if (entry.isDirectory()) await walk(full)
-      else if (entry.isFile()) out.push(full)
+      else if (entry.isFile()) {
+        const rel = relative(root, full).split(sep).join('/')
+        if (!isSyncExcluded(rel)) out.push(rel)
+      }
     }
   }
   await walk(root)
   return out
+}
+
+const PROPFIND_BODY =
+  '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>'
+
+/** 解析 multistatus：只取 href 与「是不是目录」。命名空间前缀不固定，正则按任意前缀。 */
+function parseMultistatus(text) {
+  const out = []
+  const blocks = String(text).split(/<[a-zA-Z0-9]+:response[\s>]/i).slice(1)
+  for (const block of blocks) {
+    const href = (block.match(/<[a-zA-Z0-9]+:href[^>]*>([^<]+)</i) || [])[1]
+    if (href === undefined) continue
+    out.push({ href, dir: /<[a-zA-Z0-9]+:collection[\s>/]/i.test(block) })
+  }
+  return out
+}
+
+/** href → 相对 base 的路径；跨出 base 或含 .. 的一律丢弃。 */
+function remoteRel(href, prefix) {
+  let path
+  try {
+    path = decodeURIComponent(href)
+  } catch {
+    path = href
+  }
+  if (!path.startsWith(prefix)) return undefined
+  const rel = path.slice(prefix.length).replace(/\/+$/, '')
+  if (rel === '') return undefined
+  if (rel.split('/').some((part) => part === '' || part === '.' || part === '..')) return undefined
+  return rel
+}
+
+/**
+ * 递归列出远端镜像目录下的全部文件（只读）。
+ * 用 Depth:1 逐层走：不少 WebDAV 实现禁用 Depth:infinity。
+ */
+export async function listRemote({ base, auth, concurrency = 6, maxRequests = 2000 }) {
+  const prefix = new URL(base).pathname.replace(/\/+$/, '') + '/'
+  const files = new Set()
+  const visited = new Set([''])
+  let queue = [base]
+  let requests = 0
+
+  while (queue.length > 0 && requests < maxRequests) {
+    const batch = queue.splice(0, concurrency)
+    requests += batch.length
+    const responses = await Promise.all(batch.map((dir) => webdavRequest(dir, {
+      method: 'PROPFIND',
+      headers: { Depth: '1', 'Content-Type': 'application/xml', 'Content-Length': String(PROPFIND_BODY.length) },
+      body: PROPFIND_BODY,
+      timeoutMs: 15000,
+      auth,
+    })))
+    for (let i = 0; i < responses.length; i++) {
+      const response = responses[i]
+      if (response.status !== 207) {
+        throw new Error(`列远端目录失败（HTTP ${response.status}）: ${batch[i]}`)
+      }
+      const body = response.body.toString('utf8')
+      for (const item of parseMultistatus(body)) {
+        const rel = remoteRel(item.href, prefix)
+        if (rel === undefined) continue
+        if (item.dir) {
+          if (visited.has(rel)) continue
+          visited.add(rel)
+          queue.push(base + '/' + rel.split('/').map(encodeURIComponent).join('/'))
+        } else {
+          files.add(rel)
+        }
+      }
+    }
+  }
+  return files
+}
+
+/** 删除远端单个文件；404 视为已经不在（成功）。 */
+async function deleteRemote(base, rel, auth) {
+  const res = await webdavRequest(joinUrl(base, rel), { method: 'DELETE', timeoutMs: 15000, auth })
+  if (res.status === 404) return
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`DELETE ${rel} 失败（HTTP ${res.status}）`)
+  }
 }
 
 /** 测试 WebDAV 配置：PROPFIND depth:0；2xx 可达；401 认证失败；其它 4xx/5xx 路径/权限问题。 */
@@ -719,7 +933,7 @@ export function apply(ctx, config = {}) {
   }
 
   // ---- 写入即同步 hook：tools/result 监听（核心） ----
-  const syncState = new SyncState(kbRoot)
+  const syncState = new SyncState(kbRoot, dshHome)
   let syncChain = syncState.ready.then(() => {}) // 串行化：同一时刻最多一个同步任务
   let autoTimer = null
   ctx.effect(() => () => {
@@ -825,14 +1039,18 @@ function runKbCheckProcess(python, script, kbRoot) {
       }
       const user = (await resolveRef(creds, CRED_USER_REF)) || ''
       const password = (await resolveRef(creds, CRED_PASSWORD_REF)) || ''
-      const result = await syncRoot({ kbRoot, url, user, password, state: syncState.state })
+      const result = await syncRoot({
+        kbRoot, url, user, password, previousMap: syncState.fileMapObject(),
+      })
+      await syncState.saveFileMap(new Map(Object.entries(result.fileMap)))
       await syncState.record({
         lastSyncAt: new Date().toISOString(),
         lastSyncStatus: 'ok',
         lastError: null,
         lastTrigger: trigger,
         syncedFiles: result.pushed.length,
-        fileMap: result.fileMap,
+        deletedFiles: result.deleted.length,
+        failedDeletes: result.failedDeletes.length,
       })
       return { ok: true, pushed: result.pushed, total: result.total, state: syncState.snapshot() }
     } catch (error) {
