@@ -94,8 +94,6 @@ window.__ModuleLoader__.load({
       confirmDownload: isZh()
         ? '下载会用云端覆盖本地同名文件。本地多出来的文件不会被删除。确定继续？'
         : 'Download overwrites local files with the cloud copies. Files that exist only locally are kept. Continue?',
-      provider: isZh() ? '服务商' : 'Provider',
-      providerCustom: isZh() ? '自定义' : 'Custom',
       remoteDir: isZh() ? '远程根目录' : 'Remote folder',
       remoteDirHint: isZh() ? '远端只写这个目录，默认 local-kb-sync' : 'Only this cloud folder is written; default local-kb-sync',
       autoSync: isZh() ? '自动同步' : 'Auto upload',
@@ -160,7 +158,18 @@ window.__ModuleLoader__.load({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body || {}),
         signal: controller ? controller.signal : undefined,
-      }).then(function (r) { return r.json() }).finally(function () { if (timer) clearTimeout(timer) })
+      }).then(function (r) {
+        // 非 2xx 时给出可读错误：路由不存在会 404，鉴权失败会 401，别再当成 JSON 解析错误
+        return r.text().then(function (text) {
+          var data = null
+          try { data = text ? JSON.parse(text) : null } catch (e) { data = null }
+          if (!r.ok) {
+            var reason = data && (data.reason || data.error) ? (data.reason || data.error) : text.slice(0, 120)
+            throw new Error('HTTP ' + r.status + (reason ? '：' + reason : ''))
+          }
+          return data
+        })
+      }).finally(function () { if (timer) clearTimeout(timer) })
     }
 
     /* =====================================================================
@@ -268,7 +277,6 @@ window.__ModuleLoader__.load({
       var [syncState, setSyncState] = useState({})
       var [overview, setOverview] = useState(null)
       var [showAllProjects, setShowAllProjects] = useState(false)
-      var [provider, setProvider] = useState('custom')
       var [remoteDir, setRemoteDir] = useState('local-kb-sync')
       var [autoSync, setAutoSync] = useState(false)
 
@@ -280,9 +288,8 @@ window.__ModuleLoader__.load({
             if (typeof data.webdavUrl === 'string' && data.webdavUrl !== '') setUrl(data.webdavUrl)
             if (typeof data.webdavUser === 'string' && data.webdavUser !== '') setUser(data.webdavUser)
             if (data.settings) {
-              setProvider(data.settings.provider || 'custom')
               setRemoteDir(data.settings.remoteDir || 'local-kb-sync')
-              setAutoSync(data.settings.autoSync !== false)
+              setAutoSync(data.settings.autoSync === true)
             }
           }
           return data
@@ -319,7 +326,7 @@ window.__ModuleLoader__.load({
         if (user.trim()) chain = chain.then(function () { return setCredential(CRED_USER, user.trim()) })
         if (pw) chain = chain.then(function () { return setCredential(CRED_PASSWORD, pw) })
         chain = chain.then(function () {
-          return postJson(API_SETTINGS, { provider: provider, remoteDir: remoteDir, autoSync: autoSync })
+          return postJson(API_SETTINGS, { remoteDir: remoteDir, autoSync: autoSync })
         })
         chain.then(function () {
           showNotice('ok', T.saved)
@@ -345,7 +352,6 @@ window.__ModuleLoader__.load({
             setPw('')
             setUrlConfigured(false)
             setPwConfigured(false)
-            setProvider((r.settings && r.settings.provider) || 'custom')
             setRemoteDir((r.settings && r.settings.remoteDir) || 'local-kb-sync')
             setAutoSync(!r.settings || r.settings.autoSync !== false)
             showNotice('ok', T.cleared)
@@ -475,24 +481,6 @@ window.__ModuleLoader__.load({
         onChange: function (e) { setPw(e.target.value) }
       })
 
-      // 服务商只是地址模板的快捷方式，不改变同步逻辑。
-      var PROVIDERS = [
-        { id: 'custom', label: T.providerCustom, url: '' },
-        { id: 'jianguoyun', label: '坚果云', url: 'https://dav.jianguoyun.com/dav/' },
-        { id: 'nextcloud', label: 'Nextcloud', url: '' },
-        { id: 'synology', label: '群晖', url: '' },
-        { id: 'alist', label: 'AList', url: '' }
-      ]
-      var providerSelect = h('select', {
-        className: 'dsh-lkb-input', value: provider,
-        onChange: function (e) {
-          var next = e.target.value
-          setProvider(next)
-          var preset = PROVIDERS.filter(function (p) { return p.id === next })[0]
-          if (preset && preset.url && !url.trim()) setUrl(preset.url)
-        }
-      }, PROVIDERS.map(function (p) { return h('option', { key: p.id, value: p.id }, p.label) }))
-
       var remoteDirInput = h('input', {
         className: 'dsh-lkb-input', type: 'text', value: remoteDir, placeholder: 'local-kb-sync',
         onChange: function (e) { setRemoteDir(e.target.value) }
@@ -504,7 +492,7 @@ window.__ModuleLoader__.load({
         onChange: function (e) {
           var next = e.target.checked
           setAutoSync(next)
-          postJson(API_SETTINGS, { autoSync: next, provider: provider, remoteDir: remoteDir })
+          postJson(API_SETTINGS, { autoSync: next, remoteDir: remoteDir })
             .then(function (r) { if (r && r.settings) setAutoSync(r.settings.autoSync !== false) })
             .catch(function () { /* 保存失败下次 refreshState 会拉回真实值 */ })
         }
@@ -604,7 +592,6 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsh-lkb-card' },
             h('div', { className: 'dsh-lkb-label' }, T.webdavTitle),
             h('p', { className: 'dsh-lkb-desc' }, T.webdavDesc),
-            h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.provider), providerSelect),
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.url), urlInput),
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.user), userInput),
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.password), pwInput),
