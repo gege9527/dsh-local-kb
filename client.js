@@ -128,10 +128,6 @@ window.__ModuleLoader__.load({
       checkNoPython: isZh() ? '未运行（找不到 python3）' : 'not run (python3 not found)',
       checkNever: isZh() ? '尚未校验（写入知识库后自动运行）' : 'not checked yet (runs after a KB write)',
       overviewTitle: isZh() ? '知识库内容' : 'What is in the KB',
-      overviewSummary: isZh() ? '{projects} 个项目 · {docs} 个文档' : '{projects} projects · {docs} docs',
-      overviewNoPath: isZh() ? '未登记路径' : 'no path in paths.yaml',
-      overviewMissing: isZh() ? '路径失效，需重新登记' : 'stale path, re-register',
-      overviewNone: isZh() ? '还没有项目' : 'no projects yet',
       loading: isZh() ? '加载中…' : 'Loading…',
       auto: isZh() ? '自动' : 'auto',
       manual: isZh() ? '手动' : 'manual'
@@ -278,7 +274,6 @@ window.__ModuleLoader__.load({
       }
       var [syncState, setSyncState] = useState({})
       var [overview, setOverview] = useState(null)
-      var [showAllProjects, setShowAllProjects] = useState(false)
       var [remoteDir, setRemoteDir] = useState('local-kb-sync')
       var [autoSync, setAutoSync] = useState(false)
 
@@ -553,35 +548,17 @@ window.__ModuleLoader__.load({
         warnEls.length > 0 ? warnEls : null)
 
 
-      // 知识库内容（只读）：项目、记忆条数、索引行数、文档数
+      // 知识库概览：只报规模，明细看注入的地图与记忆索引
       var overviewCard = null
       if (overview) {
-        var shownProjects = overview.projects.slice(0, showAllProjects ? overview.projects.length : 12)
-        var projectLines = shownProjects.map(function (p) {
-          var mark = p.path === null ? T.overviewNoPath : p.pathExists === false ? T.overviewMissing : ''
-          return h('span', { key: p.id, className: p.pathExists === false ? 'dsh-lkb-status-warn' : '' },
-            p.id + ' · ' + (isZh() ? '记忆 ' : 'notes ') + p.memories +
-            ' · ' + (isZh() ? '索引 ' : 'index ') + p.indexLines + (isZh() ? ' 行' : ' lines') +
-            (mark ? ' · ' + mark : ''))
-        })
+        var unregistered = overview.projects.filter(function (x) { return x.pathState === 'unregistered' }).length
+        var stalePaths = overview.projects.filter(function (x) { return x.pathState === 'stale' }).length
+        var summary = overview.projects.length + ' 个项目 · ' + overview.docs + ' 个文档'
+        if (unregistered > 0) summary += ' · ' + unregistered + ' 个未登记路径'
+        if (stalePaths > 0) summary += ' · ' + stalePaths + ' 个路径失效'
         overviewCard = h('div', { className: 'dsh-lkb-card' },
           h('div', { className: 'dsh-lkb-label' }, T.overviewTitle),
-          h('p', { className: 'dsh-lkb-desc' },
-            T.overviewSummary
-              .replace('{projects}', String(overview.projects.length))
-              .replace('{docs}', String(overview.docs))),
-          overview.projects.length === 0
-            ? h('p', { className: 'dsh-lkb-desc' }, T.overviewNone)
-            : h('div', { className: 'dsh-lkb-status' }, projectLines),
-          overview.projects.length > 12
-            ? h('button', {
-              type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost',
-              onClick: function () { setShowAllProjects(!showAllProjects) }
-            }, showAllProjects
-              ? (isZh() ? '收起' : 'Show less')
-              : (isZh() ? '显示全部 ' + overview.projects.length + ' 个' : 'Show all ' + overview.projects.length))
-            : null
-        )
+          h('p', { className: 'dsh-lkb-desc' }, summary))
       }
 
       var noticeEl = notice ? h('div', { className: 'dsh-lkb-toast dsh-lkb-toast-' + (notice.kind === 'error' ? 'error' : 'ok'), role: 'status' },
