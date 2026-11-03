@@ -1,5 +1,5 @@
 <!-- KB_LOCAL_START -->
-<!-- KB_LOCAL_VERSION: 3 -->
+<!-- KB_LOCAL_VERSION: 4 -->
 ## local-kb（知识库 + 长期记忆）
 
 知识库 `<KB_ROOT>/`（默认 `~/.local-kb/`，`KB_ROOT` 可覆盖）：
@@ -30,11 +30,11 @@
 
 ### 写入契约
 
+- **学到即写**：出现决策、纠正、约束、可复用的坑 → 当场写，不攒到任务结束。
+- **结束检查点**：收尾过一遍——晋升持久结论、退休临时状态；没值得留的就说明，别硬写。
 - 一条事实一个文件；frontmatter 五字段 `name/description/type/created/updated`；type 限 `user|feedback|project|reference`。
 - 指针只进**同目录**的 `MEMORY.md`；同事实更新旧笔记（改 updated），推翻标 `> Superseded <日期>`，不删。
-- 不存凭据；不重复 git 已记的内容；全局记忆只装跨项目的事。
-- 写完跑 `python3 <技能目录>/tools/kb-check.py`，退出码非 0 不得报成功；报告 added / updated / archived / skipped。
-- 建档（新增项目/文档）与维护（archive / refresh）按 `SKILL.md` 的动作清单走。
+- 不存凭据；不重复 git 已记的内容；全局记忆只装跨项目的事。写完报告 added / updated / archived / skipped。
 
 ### 边界
 
