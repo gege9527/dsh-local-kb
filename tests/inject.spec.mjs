@@ -70,6 +70,38 @@ const big = 'x'.repeat(DEFAULT_INDEX_MAX_BYTES)
 const cutBytes = truncateIndex(big + '\n' + big)
 check('截断到字节上限', cutBytes.cut && Buffer.byteLength(cutBytes.text, 'utf8') <= DEFAULT_INDEX_MAX_BYTES)
 
+// 地图折叠：子项目超过 10 个才折叠，折叠后名字仍全列
+const mono = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-mono-'))
+const monoRoot = path.join(mono, 'mono')
+fs.mkdirSync(monoRoot, { recursive: true })
+const children = Array.from({ length: 12 }, (_, i) => 'parent-sub-' + i)
+for (const id of ['parent', ...children]) {
+  fs.mkdirSync(path.join(mono, 'projects', id), { recursive: true })
+}
+fs.writeFileSync(path.join(mono, 'paths.yaml'), [
+  'parent:',
+  '  path: ' + monoRoot,
+  ...children.flatMap((id) => [id + ':', '  path: ' + path.join(monoRoot, id)]),
+].join('\n'))
+
+const foldedMap = knowledgeMapText({ kbRoot: mono, cwd: monoRoot })
+check('超过 10 个子项目才折叠', foldedMap.includes('parent（子：parent-sub-0'), foldedMap.split('\n')[1])
+check('折叠后子项目名仍全列', foldedMap.includes('parent-sub-11'), '缺最后一个子项目名')
+check('折叠的子项目不再单列', !foldedMap.includes('、parent-sub-0、'), '仍然单独列出')
+check('折叠不丢总数', foldedMap.includes('项目（13）'), foldedMap.split('\n')[1])
+
+const few = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-few-'))
+fs.mkdirSync(path.join(few, 'projects', 'parent'), { recursive: true })
+fs.mkdirSync(path.join(few, 'projects', 'parent-a'), { recursive: true })
+fs.mkdirSync(path.join(few, 'projects', 'parent-b'), { recursive: true })
+fs.writeFileSync(path.join(few, 'paths.yaml'), [
+  'parent:', '  path: /tmp/few-mono',
+  'parent-a:', '  path: /tmp/few-mono/a',
+  'parent-b:', '  path: /tmp/few-mono/b',
+].join('\n'))
+const flatMap = knowledgeMapText({ kbRoot: few, cwd: '/tmp' })
+check('少于阈值不折叠', !flatMap.includes('（子：') && flatMap.includes('parent-a'), flatMap.split('\n')[1])
+
 // 地图
 const map = knowledgeMapText({ kbRoot: root, cwd: nested })
 check('地图列项目', map.includes('项目（2）') && map.includes('demo') && map.includes('other'))
@@ -92,4 +124,6 @@ console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
 fs.rmSync(root, { recursive: true, force: true })
 fs.rmSync(projectDir, { recursive: true, force: true })
 fs.rmSync(noPaths, { recursive: true, force: true })
+fs.rmSync(mono, { recursive: true, force: true })
+fs.rmSync(few, { recursive: true, force: true })
 if (failed > 0) process.exitCode = 1

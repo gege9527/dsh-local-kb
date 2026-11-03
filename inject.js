@@ -12,7 +12,7 @@
  * 一次 step 的代价是几次 stat，不是几次 readFile。
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 /** 同一份文件在这个窗口内不重复 stat（dsh 每步都会问一次）。 */
 const RECHECK_MS = 10_000
@@ -23,6 +23,8 @@ export const DEFAULT_INDEX_MAX_BYTES = 8 * 1024
 const INDEX_READ_LIMIT = 1024 * 1024
 /** 地图里最多列几个项目 id / 文档目录名。 */
 const MAP_MAX_PROJECTS = 60
+/** 一个父项目下的子项目超过这个数才折叠（当前 OA-AI 有 5 个，不折叠）。 */
+const MAP_FOLD_THRESHOLD = 10
 const MAP_MAX_DOCS = 8
 
 /**
@@ -184,10 +186,35 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
   }
   const mapped = new Set(entries.map((entry) => entry.id))
   const missing = dirs.filter((id) => !mapped.has(id))
-  const ids = dirs.slice(0, MAP_MAX_PROJECTS)
+
+  // 父子关系按「路径的直接父目录」判定，不靠 id 前缀（oa-ai-web 这类会被误判）。
+  const byPath = new Map(entries.map((entry) => [resolve(entry.path), entry]))
+  const childrenOf = new Map()
+  const allChildren = new Set()
+  for (const entry of entries) {
+    const parent = byPath.get(dirname(resolve(entry.path)))
+    if (parent === undefined) continue
+    allChildren.add(entry.id)
+    if (!childrenOf.has(parent.id)) childrenOf.set(parent.id, [])
+    childrenOf.get(parent.id).push(entry.id)
+  }
+  // 子项目超过阈值才折叠；折叠时仍把名字全列出来，模型不失去线索。
+  const folded = new Map()
+  for (const [parentId, kids] of childrenOf) {
+    if (kids.length > MAP_FOLD_THRESHOLD) folded.set(parentId, kids)
+  }
+  const hidden = new Set()
+  for (const kids of folded.values()) for (const kid of kids) hidden.add(kid)
+
+  const ids = []
+  for (const id of dirs) {
+    if (hidden.has(id)) continue
+    ids.push(folded.has(id) ? `${id}（子：${folded.get(id).join('、')}）` : id)
+  }
+  const shown = ids.slice(0, MAP_MAX_PROJECTS)
 
   const lines = [`## 知识库地图 · ${kbRoot}`]
-  lines.push(`项目（${dirs.length}）：` + ids.join('、') + (dirs.length > ids.length ? ' …' : ''))
+  lines.push(`项目（${dirs.length}）：` + shown.join('、') + (ids.length > shown.length ? ' …' : ''))
   if (missing.length > 0) lines.push(`缺本机路径（paths.yaml 未登记）：` + missing.join('、'))
 
   const project = projectForPath(cwd, entries)
