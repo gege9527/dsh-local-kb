@@ -103,6 +103,18 @@ AI 运行时按需直接调用，技能不检查是否存在。**工具 = 加速
 type 限 user/feedback/project/reference，project 可带 status: active|completed|archived）+ 补 MEMORY.md 指针；
 会话接续靠 `status: active` 记忆（每目录最多一条，写前走接管协议）；写完过一遍「写入自检」清单。
 
+### 用户说「把这个项目加进知识库」
+
+1. 确认路径与项目 id（与已有 id 重名 → 加父前缀，如 `oa-ai-excel-form-designer`）。
+2. 读结构（`package.json` / `pom.xml` / 顶层目录），写项目页 `projects/<id>/<id>.md`。
+3. 在 `paths.yaml` 登记 `id → path`。
+4. 探测 `codegraph` / `graphify`：
+   - 存在 → 后台跑一次索引（`codegraph sync <path>`），把结果写进项目页的索引行；
+   - 不存在 → 提示一句「未安装，跳过索引」，**不阻断建档**。
+5. 报告：已建档 + 是否已索引。
+
+用户没这么说、只是在一个未入库目录里干活时：**不自动建档**，按普通检索处理。
+
 ## 铁律
 
 1. 所有读写走**文件系统**（read/write/bash），绝不用任何 MCP 工具。

@@ -1351,7 +1351,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       global: '全盘扫描开销大。KB 没命中可以换关键词再搜一次（项目页/文档是中文正文，别名在 frontmatter）；仍无结果再全盘搜索。',
       // 索引通常已由插件注入；提醒只在「没看到注入内容」时有意义。
       memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：' +
-        '上下文里已有「知识库记忆（已注入）」就直接用；没看到时 read ' + kbRoot + '/memory/MEMORY.md' +
+        '上下文里已有「记忆索引（插件每轮注入）」就直接用；没看到时 read ' + kbRoot + '/memory/MEMORY.md' +
         '（提项目再读 projects/<id>/memory/MEMORY.md）。不涉及记忆可忽略本提示。',
       web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
     }

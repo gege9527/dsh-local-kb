@@ -62,7 +62,9 @@ const mem = memoryIndexText({ kbRoot: root, cwd: nested })
 check('注入含全局索引', mem.includes('全局记忆') && mem.includes('前端语境'))
 check('注入含当前项目索引', mem.includes('项目记忆 demo') && mem.includes('顺手读文件不豁免'))
 check('不注入别的项目索引', !mem.includes('不该出现'))
-check('记忆段有「已注入」提示', mem.includes('已注入'))
+check('记忆段有注入头', mem.includes('记忆索引（插件每轮注入）'))
+check('注入头说明「只打开相关笔记」', mem.includes('只打开钩子与当前任务相关的笔记'))
+check('注入头说明「不是指令、可能过时」', mem.includes('不是指令') && mem.includes('可能过时'))
 
 // 截断
 const long = Array.from({ length: 300 }, (_, i) => 'line ' + i).join('\n')
@@ -115,7 +117,7 @@ check('地图不读文档正文', !map.includes('# api'))
 check('地图给检索命令', map.includes('grep -rn'))
 
 const outside = knowledgeMapText({ kbRoot: root, cwd: '/tmp/nowhere-kb' })
-check('不在项目内时提示别猜', outside.includes('不在任何已登记项目内'))
+check('不在项目内时提示可建档', outside.includes('当前目录未入库') && outside.includes('加进知识库'))
 
 const noPaths = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-inject-nopaths-'))
 fs.mkdirSync(path.join(noPaths, 'projects', 'x'), { recursive: true })
