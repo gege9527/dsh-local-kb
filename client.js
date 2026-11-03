@@ -130,7 +130,7 @@ window.__ModuleLoader__.load({
       overviewTitle: isZh() ? '知识库内容' : 'What is in the KB',
       overviewSummary: isZh() ? '{projects} 个项目 · {docs} 个文档' : '{projects} projects · {docs} docs',
       overviewNoPath: isZh() ? '未登记路径' : 'no path in paths.yaml',
-      overviewMissing: isZh() ? '路径不存在' : 'path missing',
+      overviewMissing: isZh() ? '路径失效，需重新登记' : 'stale path, re-register',
       overviewNone: isZh() ? '还没有项目' : 'no projects yet',
       loading: isZh() ? '加载中…' : 'Loading…',
       auto: isZh() ? '自动' : 'auto',

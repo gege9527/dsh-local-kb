@@ -1559,11 +1559,15 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
           indexLines = 0
         }
         const localPath = entries.get(id)
+        // 三种状态分开报：ok / stale（登记的是别的机器的路径）/ unregistered
+        const pathState = localPath === undefined
+          ? 'unregistered'
+          : existsSyncSafe(localPath) ? 'ok' : 'stale'
         projects.push({
           id,
           path: localPath ?? null,
-          // 只报「登记了且目录还在」，不替用户猜路径
-          pathExists: localPath === undefined ? null : existsSyncSafe(localPath),
+          pathExists: localPath === undefined ? null : pathState === 'ok',
+          pathState,
           memories,
           indexLines,
         })

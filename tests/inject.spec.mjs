@@ -117,7 +117,8 @@ check('不在项目内时提示别猜', outside.includes('不在任何已登记�
 const noPaths = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-inject-nopaths-'))
 fs.mkdirSync(path.join(noPaths, 'projects', 'x'), { recursive: true })
 const noMap = knowledgeMapText({ kbRoot: noPaths, cwd: '/tmp' })
-check('缺 paths.yaml 时列项目并标缺路径', noMap.includes('缺本机路径') && noMap.includes('x'))
+check('缺 paths.yaml 时标为未登记', noMap.includes('未登记（paths.yaml 没有条目）') && noMap.includes('x'), noMap)
+check('路径失效单独标注', map.includes('路径失效') && map.includes('other'), map)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)

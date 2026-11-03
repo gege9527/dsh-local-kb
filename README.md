@@ -89,10 +89,23 @@ WebDAV 链接、用户名、密码全部存 DSH `credentials` 服务（`$DSH_HOM
 - 提醒是 post-execute 附加上下文，不 deny、不重写结果
 - 异常安全：门禁内部任何错误 → 放行；`DSH_LOCAL_KB_ENFORCE=0` 总闸
 
+## 同步范围
+
+- **会同步**：`docs/`、`projects/`（含记忆、项目页、arch）、`memory/`、`README.md`、`paths.yaml`
+- **不同步**：`.DS_Store`、`._*`、`*.tmp`、`Thumbs.db`、`.kb-sync-state.json`、`settings.json`、`backups/`
+- **增量**：按 mtime + size 比对，只传变化的文件；远端多余的文件会删（镜像）
+- **paths.yaml 会同步**：它带的 `git_remote` 是新设备克隆项目的关键。下载后本机路径通常失效，
+  地图会标「路径失效（用 git_remote 重新登记）」，不会当成有效路径使用。
+
+## 多设备
+
+当前只支持**单写者**：同一时间只让一台设备上传，另一台只读（下载后不再点上传）。
+两端都写会互相删除，这在 `DESIGN-multi-device-sync.md` 里有完整的合并方案，尚未实现。
+
 ## 开发
 
 ```sh
-npm test        # 全部测试（10 个文件，187 项）
+npm test        # 全部测试（12 个文件，244 项）
 ```
 
 - `index.js`：Host 半（技能安装、注入、guard、同步、API）

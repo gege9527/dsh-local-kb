@@ -65,6 +65,22 @@ export function projectForPath(cwd, entries) {
   return best
 }
 
+/** 目录是否存在（缓存 10 秒，避免每步 stat 一遍所有项目路径）。 */
+function pathExists(dir, cache) {
+  const key = 'exists:' + dir
+  const now = Date.now()
+  const hit = cache.get(key)
+  if (hit !== undefined && now - hit.at < RECHECK_MS) return hit.value
+  let value = false
+  try {
+    value = statSync(dir).isDirectory()
+  } catch {
+    value = false
+  }
+  cache.set(key, { at: now, value })
+  return value
+}
+
 /** 带 mtime/size 缓存的同步读；读不到返回 undefined。 */
 function readCached(path, cache) {
   const now = Date.now()
@@ -186,6 +202,8 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
   }
   const mapped = new Set(entries.map((entry) => entry.id))
   const missing = dirs.filter((id) => !mapped.has(id))
+  // 路径失效：登记了但指向别的机器的目录（新设备下载 paths.yaml 后的常态）。
+  const stale = entries.filter((entry) => !pathExists(entry.path, cache)).map((entry) => entry.id)
 
   // 父子关系按「路径的直接父目录」判定，不靠 id 前缀（oa-ai-web 这类会被误判）。
   const byPath = new Map(entries.map((entry) => [resolve(entry.path), entry]))
@@ -215,7 +233,10 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
 
   const lines = [`## 知识库地图 · ${kbRoot}`]
   lines.push(`项目（${dirs.length}）：` + shown.join('、') + (ids.length > shown.length ? ' …' : ''))
-  if (missing.length > 0) lines.push(`缺本机路径（paths.yaml 未登记）：` + missing.join('、'))
+  if (stale.length > 0) {
+    lines.push('路径失效（登记的是原设备路径，用 git_remote 重新登记）：' + stale.join('、'))
+  }
+  if (missing.length > 0) lines.push('未登记（paths.yaml 没有条目）：' + missing.join('、'))
 
   const project = projectForPath(cwd, entries)
   if (project !== undefined) {
