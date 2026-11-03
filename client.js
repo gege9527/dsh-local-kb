@@ -56,8 +56,8 @@ window.__ModuleLoader__.load({
       nav: isZh() ? '知识库' : 'Knowledge Base',
       sectionTitle: isZh() ? '知识库' : 'Knowledge Base',
       sectionDesc: isZh()
-        ? '集中管理 local-kb 知识库：位置、打开、WebDAV 同步。写入知识库目录后自动同步。'
-        : 'Manage the local-kb knowledge base: location, open, WebDAV sync. Changes under the KB directory sync automatically.',
+        ? '知识库位置、WebDAV 备份与同步设置。默认不会自动上传，需要你点「上传到云端」。'
+        : 'Knowledge base location, WebDAV backup and sync. Nothing uploads automatically by default — use Upload.',
       kbLocation: isZh() ? '知识库位置' : 'Knowledge base location',
       openFolder: isZh() ? '打开文件夹' : 'Open Folder',
       openVscode: isZh() ? '使用 VSCode 打开' : 'Open in VSCode',
@@ -66,10 +66,10 @@ window.__ModuleLoader__.load({
       opened: isZh() ? '已打开' : 'Opened',
       openFailed: isZh() ? '打开失败' : 'Open failed',
       notInstalled: isZh() ? '技能尚未安装到 $DSH_HOME/skills/local-kb' : 'Skill not installed to $DSH_HOME/skills/local-kb',
-      webdavTitle: isZh() ? 'WebDAV 同步' : 'WebDAV Sync',
+      webdavTitle: isZh() ? 'WebDAV 备份' : 'WebDAV Backup',
       webdavDesc: isZh()
-        ? '写入知识库后自动上传。上传 = 本地覆盖云端（云端多出的文件删除）；下载 = 云端覆盖本地同名文件（本地多出的保留）。'
-        : 'KB writes upload automatically. Upload = local overwrites cloud (extra cloud files are deleted); Download = cloud overwrites local files (local-only files are kept).',
+        ? '上传：本地覆盖云端，云端多出的文件删除。下载：云端覆盖本地同名文件，本地多出的保留。两个方向都会先确认。'
+        : 'Upload: local overwrites the cloud and extra cloud files are deleted. Download: the cloud overwrites local files and local-only files are kept. Both ask first.',
       url: isZh() ? 'WebDAV 链接' : 'WebDAV URL',
       urlPh: isZh() ? 'https://dav.example.com/kb' : 'https://dav.example.com/kb',
       user: isZh() ? '用户名' : 'Username',
@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
       test: isZh() ? '测试链接' : 'Test Link',
       testing: isZh() ? '测试中…' : 'Testing…',
       syncNow: isZh() ? '上传到云端' : 'Upload',
-      syncTimeout: isZh() ? '同步超时（30 秒）' : 'Sync timed out (30s)',
+      syncTimeout: isZh() ? '上传超时（30 秒）' : 'Upload timed out (30s)',
       syncing: isZh() ? '上传中…' : 'Uploading…',
       syncOk: isZh() ? '上传完成' : 'Upload complete',
       download: isZh() ? '从云端下载' : 'Download',
@@ -114,8 +114,8 @@ window.__ModuleLoader__.load({
       openWith: isZh() ? '用 {app} 打开' : 'Open with {app}',
       aboutTitle: isZh() ? '插件说明' : 'About this plugin',
       aboutAutoClean: isZh()
-        ? 'hooks（写入即同步、KB-first 提醒、定时器、API 路由）随插件禁用/卸载自动清理，无需手动处理。'
-        : 'Hooks (write-sync, KB-first reminder, timers, API routes) are auto-cleaned when the plugin is disabled or uninstalled — nothing to do manually.',
+        ? '插件的后台逻辑（同步、提醒、API 路由）随插件禁用或卸载自动注销，不用手动清理。'
+        : 'Background logic (sync, reminders, API routes) is unregistered automatically when the plugin is disabled or removed.',
       aboutManualClean: isZh()
         ? '卸载：在插件目录运行 node install-skill.js --uninstall —— 删除技能副本、AGENTS.md 常驻块、WebDAV 凭据（先备份）、插件设置与同步状态；知识库目录不动，那是你的数据。'
         : 'Uninstall: run node install-skill.js --uninstall in the plugin directory — removes the skill copy, the KB_LOCAL block, WebDAV credentials (backed up first), plugin settings and sync state. The KB folder itself is left alone — it is your data.',
