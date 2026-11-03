@@ -38,7 +38,7 @@
  */
 import { constants as FS } from 'node:fs'
 import { lstatSync, realpathSync } from 'node:fs'
-import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -341,13 +341,38 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** 从 .credentials.yaml 里删掉本插件的三个 ref，先备份原文件。 */
+async function removeWebdavCredentials(dshHome) {
+  const file = join(dshHome, '.credentials.yaml')
+  const keys = ['dsh_local_kb_webdav_url', 'dsh_local_kb_webdav_user', 'dsh_local_kb_webdav_password']
+  let text
+  try {
+    text = await readFile(file, 'utf8')
+  } catch {
+    return { removed: 0 }
+  }
+  const lines = text.split('\n')
+  const kept = lines.filter((line) => !keys.some((key) => new RegExp('^\\s*' + key + ':').test(line)))
+  if (kept.length === lines.length) return { removed: 0 }
+  const backup = file + '.local-kb-bak'
+  try {
+    await writeFile(backup, text, { mode: 0o600 })
+    await writeFile(file, kept.join('\n'), 'utf8')
+    return { removed: lines.length - kept.length, backup }
+  } catch (error) {
+    return { removed: 0, error: errorMessage(error) }
+  }
+}
+
 /**
- * 卸载：撤掉插件安装进用户目录的东西 —— 技能副本与 AGENTS.md 的 KB_LOCAL 块。
+ * 卸载：撤掉插件留在用户目录里的**全部**产物。
  *
- * 这是**用户主动运行**的操作（`node install-skill.js --uninstall`）。插件在运行时
- * 不会自动调用它：知识库内容只由用户处置，卸载也不能替用户删东西。
+ * 删：技能副本（软链只解链接，不动目标）、AGENTS.md 的 KB_LOCAL 块、
+ *     WebDAV 凭据、插件设置/同步状态/备份目录。
+ * 不删：知识库目录（`$KB_ROOT`），那是用户数据。
  *
- * 凭据（$DSH_HOME/.credentials.yaml 里的 dsh_local_kb_webdav_*）不动，由用户决定。
+ * 这是**用户主动运行**的操作（`node install-skill.js --uninstall`）。插件被
+ * `dsh plugin remove` 移除后代码不再运行，没有自动钩子，只能靠这条命令收尾。
  */
 export async function uninstallSkill(opts = {}) {
   const dshHome = resolveDshHome(opts.env ?? process.env)
@@ -356,12 +381,18 @@ export async function uninstallSkill(opts = {}) {
   const removed = []
   const notes = []
 
-  // 只删自己装的那一个目录，且必须真的落在 skills/ 下面
+  // 只删自己装的那一个目录，且必须真的落在 skills/ 下面。
+  // 目标是软链时只解链接：它可能指向 cc-switch 之类被其他工具共用的技能库。
   if (dest !== skillsRoot && dest.startsWith(skillsRoot + sep)) {
     try {
-      await access(dest, FS.F_OK)
-      await rm(dest, { recursive: true, force: true })
-      removed.push(dest)
+      const info = lstatSync(dest)
+      if (info.isSymbolicLink()) {
+        await unlink(dest)
+        removed.push(`${dest}（软链，仅解链接，目标保留）`)
+      } else if (info.isDirectory()) {
+        await rm(dest, { recursive: true, force: true })
+        removed.push(dest)
+      }
     } catch (error) {
       if (error?.code !== 'ENOENT') notes.push(`技能副本删除失败：${errorMessage(error)}`)
     }
@@ -394,7 +425,27 @@ export async function uninstallSkill(opts = {}) {
     }
   }
 
-  notes.push('WebDAV 凭据保留在 $DSH_HOME/.credentials.yaml，需要时手动删除')
+  // WebDAV 凭据：卸载就该清掉，删前备份原文件（0600）
+  const creds = await removeWebdavCredentials(dshHome)
+  if (creds.error !== undefined) {
+    notes.push(`凭据清理失败：${creds.error}`)
+  } else if (creds.removed > 0) {
+    removed.push(`WebDAV 凭据 ${creds.removed} 项（备份：${creds.backup}）`)
+  } else {
+    notes.push('没有找到本插件的 WebDAV 凭据')
+  }
+
+  // 插件运行状态：设置、同步基准分片、覆盖前备份
+  const stateDir = join(dshHome, 'local-kb')
+  try {
+    await access(stateDir, FS.F_OK)
+    await rm(stateDir, { recursive: true, force: true })
+    removed.push(stateDir)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') notes.push(`插件状态目录删除失败：${errorMessage(error)}`)
+  }
+
+  notes.push('知识库目录（$KB_ROOT，默认 ~/.local-kb）未删除：那是你的数据，需要时手动处理')
   return { removed, notes }
 }
 

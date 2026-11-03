@@ -42,14 +42,22 @@ WebDAV 链接、用户名、密码全部存 DSH `credentials` 服务（`$DSH_HOM
 
 - **自动清理**：插件注册的 hook（同步监听、门禁提醒、防抖定时器、API 路由、运行时技能注册）
   挂在 fiber 上，禁用/卸载时随 dispose 自动注销。
-- **插件安装的文件不自动删**：卸载后手动运行一次：
+- **文件产物要手动收尾**：`dsh plugin remove` 之后插件代码不再运行，没有钩子可挂。运行一次：
 
   ```sh
   node install-skill.js --uninstall
   ```
 
-  移除技能副本与 `AGENTS.md` 的 `KB_LOCAL` 块，块外内容与别的技能不动。
-- **凭据保留**：`$DSH_HOME/.credentials.yaml` 中的 `dsh_local_kb_webdav_*` 需要时手动删除。
+  会删除：
+
+  | 内容 | 说明 |
+  |---|---|
+  | 技能副本 `$DSH_HOME/skills/local-kb/` | 是软链时只解链接，指向的共享技能库不动 |
+  | `AGENTS.md` 的 `KB_LOCAL` 块 | 块外内容一行不动 |
+  | WebDAV 凭据 `dsh_local_kb_webdav_*` | 删前备份到 `.credentials.yaml.local-kb-bak`（0600） |
+  | 插件状态 `$DSH_HOME/local-kb/` | 设置、同步基准、覆盖前备份 |
+
+  **不会删**：知识库目录（`$KB_ROOT`，默认 `~/.local-kb`）—— 那是你的数据。
 
 ## 使用
 

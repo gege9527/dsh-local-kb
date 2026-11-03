@@ -117,8 +117,8 @@ window.__ModuleLoader__.load({
         ? 'hooks（写入即同步、KB-first 提醒、定时器、API 路由）随插件禁用/卸载自动清理，无需手动处理。'
         : 'Hooks (write-sync, KB-first reminder, timers, API routes) are auto-cleaned when the plugin is disabled or uninstalled — nothing to do manually.',
       aboutManualClean: isZh()
-        ? '不会自动删除：在插件目录运行 node install-skill.js --uninstall 可移除技能副本与 AGENTS.md 常驻块（块外内容保留）；WebDAV 凭据需手动删除。'
-        : 'Not auto-removed: run node install-skill.js --uninstall in the plugin directory to remove the skill copy and the KB_LOCAL block (content outside it is kept); WebDAV credentials must be deleted by hand.',
+        ? '卸载：在插件目录运行 node install-skill.js --uninstall —— 删除技能副本、AGENTS.md 常驻块、WebDAV 凭据（先备份）、插件设置与同步状态；知识库目录不动，那是你的数据。'
+        : 'Uninstall: run node install-skill.js --uninstall in the plugin directory — removes the skill copy, the KB_LOCAL block, WebDAV credentials (backed up first), plugin settings and sync state. The KB folder itself is left alone — it is your data.',
       syncFailedAt: isZh() ? '同步失败（{time}）：{reason}' : 'Sync failed at {time}: {reason}',
       checkPrefix: isZh() ? '知识库体检' : 'KB check',
       checkOk: isZh() ? '通过' : 'passed',
