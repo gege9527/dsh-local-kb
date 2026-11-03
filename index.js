@@ -1187,8 +1187,15 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       }
       const user = (await resolveRef(creds, CRED_USER_REF)) || ''
       const password = (await resolveRef(creds, CRED_PASSWORD_REF)) || ''
+      // 远端根目录改过：旧基准对应的是另一个目录，必须清空重推，
+      // 否则「本地没变化」会让新目录一个文件都建不起来。
+      let previousMap = syncState.fileMapObject()
+      if (syncState.state.remoteDir !== pluginSettings.remoteDir) {
+        previousMap = {}
+        await syncState.saveFileMap(new Map())
+      }
       const result = await syncRoot({
-        kbRoot, url, user, password, previousMap: syncState.fileMapObject(),
+        kbRoot, url, user, password, previousMap,
         remoteDir: pluginSettings.remoteDir,
       })
       await syncState.saveFileMap(new Map(Object.entries(result.fileMap)))
@@ -1200,6 +1207,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         syncedFiles: result.pushed.length,
         deletedFiles: result.deleted.length,
         failedDeletes: result.failedDeletes.length,
+        remoteDir: pluginSettings.remoteDir,
       })
       return {
         ok: true,
@@ -1673,6 +1681,8 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
       const password = (await resolveRefFor(CRED_PASSWORD_REF)) || ''
       try {
         const result = await downloadRoot({ kbRoot, url, user, password, remoteDir: pluginSettings.remoteDir })
+        // 下载后本地 mtime 全变了：重建基准，否则下次上传会把所有文件重推一遍
+        await syncState.saveFileMap(await rebuildFileMap(kbRoot))
         await syncState.record({
           lastSyncAt: new Date().toISOString(),
           lastSyncStatus: result.failed.length === 0 ? 'ok' : 'failed',
@@ -1680,6 +1690,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
           lastTrigger: 'download',
           syncedFiles: result.written.length,
           deletedFiles: 0,
+          remoteDir: pluginSettings.remoteDir,
         })
         return jsonResponse(200, {
           ok: result.failed.length === 0,
@@ -1774,6 +1785,21 @@ function writeRouteDebug(dshHome, report) {
   } catch {
     // 诊断写不出来不影响功能
   }
+}
+
+/** 重新扫描本地文件，重建同步基准（下载后本地 mtime 全变了）。 */
+async function rebuildFileMap(kbRoot) {
+  const files = await listFiles(kbRoot)
+  const map = new Map()
+  for (const rel of files) {
+    try {
+      const info = await stat(join(kbRoot, rel))
+      map.set(rel, { mtimeMs: info.mtimeMs, size: info.size })
+    } catch {
+      // 并发删除的文件跳过
+    }
+  }
+  return map
 }
 
 /** 目录是否存在（overview 判断项目路径是否还在）。 */

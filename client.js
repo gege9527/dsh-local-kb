@@ -105,6 +105,7 @@ window.__ModuleLoader__.load({
         ? '清除 WebDAV 地址、账户与密码？本地知识库不受影响。'
         : 'Clear the WebDAV address, account and password? The local KB is untouched.',
       cleared: isZh() ? '配置已清除' : 'Configuration cleared',
+      saveFirst: isZh() ? '地址已修改，先点「保存配置」再同步' : 'Address changed — save the configuration first',
       never: isZh() ? '从未同步' : 'Never synced',
       lastOk: isZh() ? '上次同步成功' : 'Last sync succeeded',
       lastFailed: isZh() ? '上次同步失败' : 'Last sync failed',
@@ -124,6 +125,7 @@ window.__ModuleLoader__.load({
       checkOk: isZh() ? '通过' : 'passed',
       checkWarn: isZh() ? '有警告' : 'warnings',
       checkFail: isZh() ? '未通过' : 'failed',
+      checkNoPython: isZh() ? '未运行（找不到 python3）' : 'not run (python3 not found)',
       checkNever: isZh() ? '尚未校验（写入知识库后自动运行）' : 'not checked yet (runs after a KB write)',
       overviewTitle: isZh() ? '知识库内容' : 'What is in the KB',
       overviewSummary: isZh() ? '{projects} 个项目 · {docs} 个文档' : '{projects} projects · {docs} docs',
@@ -375,8 +377,16 @@ window.__ModuleLoader__.load({
         }).finally(function () { setBusy('') })
       }
 
+      // 表单里改了地址却没保存时，上传/下载用的还是旧地址 —— 先拦一下，别让人以为生效了。
+      function hasUnsavedUrl() {
+        var stored = (info && info.webdavUrl) || ''
+        var typed = url.trim()
+        return typed !== '' && typed !== stored
+      }
+
       // 上传：本地覆盖云端（远端多出的删除）。覆盖是破坏性操作，先让用户确认。
       function doUpload() {
+        if (hasUnsavedUrl()) { showNotice('error', T.saveFirst); return }
         if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(T.confirmUpload)) return
         setBusy('sync')
         clearNotice()
@@ -401,6 +411,7 @@ window.__ModuleLoader__.load({
 
       // 下载：云端覆盖本地同名文件；本地多出的保留（插件不删本地内容）。
       function doDownload() {
+        if (hasUnsavedUrl()) { showNotice('error', T.saveFirst); return }
         if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(T.confirmDownload)) return
         setBusy('download')
         clearNotice()
@@ -493,8 +504,14 @@ window.__ModuleLoader__.load({
           var next = e.target.checked
           setAutoSync(next)
           postJson(API_SETTINGS, { autoSync: next, remoteDir: remoteDir })
-            .then(function (r) { if (r && r.settings) setAutoSync(r.settings.autoSync !== false) })
-            .catch(function () { /* 保存失败下次 refreshState 会拉回真实值 */ })
+            .then(function (r) {
+              if (r && r.settings) setAutoSync(r.settings.autoSync === true)
+            })
+            .catch(function (err) {
+              // 没存上要让人知道，不能默默回弹
+              setAutoSync(!next)
+              showNotice('error', (err && err.message) || T.saveFailed)
+            })
         }
       })
 
@@ -512,11 +529,16 @@ window.__ModuleLoader__.load({
       var checkStatus = syncState && syncState.lastCheckStatus
       var checkLine = null
       if (checkStatus) {
-        var checkLabel = checkStatus === 'ok' ? T.checkOk : checkStatus === 'warn' ? T.checkWarn : T.checkFail
+        var checkLabel = checkStatus === 'ok' ? T.checkOk
+          : checkStatus === 'warn' ? T.checkWarn
+            : checkStatus === 'no-python' ? T.checkNoPython
+              : T.checkFail
         var checkDetail = stats
           ? '（' + (isZh() ? '记忆 ' + stats.memories + ' 条 / 文档 ' + stats.docs + ' 个' : stats.memories + ' notes / ' + stats.docs + ' docs') + '）'
           : ''
-        var checkCls = checkStatus === 'ok' ? 'dsh-lkb-status-ok' : checkStatus === 'warn' ? 'dsh-lkb-status-warn' : 'dsh-lkb-status-fail'
+        var checkCls = checkStatus === 'ok' ? 'dsh-lkb-status-ok'
+          : checkStatus === 'warn' || checkStatus === 'no-python' ? 'dsh-lkb-status-warn'
+            : 'dsh-lkb-status-fail'
         checkLine = h('span', { className: checkCls },
           T.checkPrefix + '：' + checkLabel + checkDetail + (syncState.lastCheckAt ? ' · ' + fmtTime(syncState.lastCheckAt) : ''))
       }
