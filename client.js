@@ -41,6 +41,8 @@ window.__ModuleLoader__.load({
     var API_TEST = 'api/local-kb/test-link'
     var API_OVERVIEW = 'api/local-kb/overview'
     var API_DOWNLOAD = 'api/local-kb/download'
+    var API_SETTINGS = 'api/local-kb/settings'
+    var API_CLEAR = 'api/local-kb/clear'
 
     var CRED_URL = 'dsh_local_kb_webdav_url'
     var CRED_USER = 'dsh_local_kb_webdav_user'
@@ -92,6 +94,19 @@ window.__ModuleLoader__.load({
       confirmDownload: isZh()
         ? '下载会用云端覆盖本地同名文件。本地多出来的文件不会被删除。确定继续？'
         : 'Download overwrites local files with the cloud copies. Files that exist only locally are kept. Continue?',
+      provider: isZh() ? '服务商' : 'Provider',
+      providerCustom: isZh() ? '自定义' : 'Custom',
+      remoteDir: isZh() ? '远程根目录' : 'Remote folder',
+      remoteDirHint: isZh() ? '远端只写这个目录，默认 local-kb-sync' : 'Only this cloud folder is written; default local-kb-sync',
+      autoSync: isZh() ? '自动同步' : 'Auto upload',
+      autoSyncHint: isZh()
+        ? '开启后每次写入知识库都会自动上传；关闭后仍需点「上传到云端」。'
+        : 'When on, every KB write uploads automatically; when off, use Upload manually.',
+      clearConfig: isZh() ? '清除配置' : 'Clear',
+      confirmClear: isZh()
+        ? '清除 WebDAV 地址、账户与密码？本地知识库不受影响。'
+        : 'Clear the WebDAV address, account and password? The local KB is untouched.',
+      cleared: isZh() ? '配置已清除' : 'Configuration cleared',
       never: isZh() ? '从未同步' : 'Never synced',
       lastOk: isZh() ? '上次同步成功' : 'Last sync succeeded',
       lastFailed: isZh() ? '上次同步失败' : 'Last sync failed',
@@ -252,6 +267,9 @@ window.__ModuleLoader__.load({
       }
       var [syncState, setSyncState] = useState({})
       var [overview, setOverview] = useState(null)
+      var [provider, setProvider] = useState('custom')
+      var [remoteDir, setRemoteDir] = useState('local-kb-sync')
+      var [autoSync, setAutoSync] = useState(true)
 
       function refreshState() {
         return getJson(API_STATE).then(function (data) {
@@ -260,6 +278,11 @@ window.__ModuleLoader__.load({
             // host 回显已存凭据：URL/用户名回填（密码永不回显，describe 不返回值）
             if (typeof data.webdavUrl === 'string' && data.webdavUrl !== '') setUrl(data.webdavUrl)
             if (typeof data.webdavUser === 'string' && data.webdavUser !== '') setUser(data.webdavUser)
+            if (data.settings) {
+              setProvider(data.settings.provider || 'custom')
+              setRemoteDir(data.settings.remoteDir || 'local-kb-sync')
+              setAutoSync(data.settings.autoSync !== false)
+            }
           }
           return data
         }).catch(function () { /* 状态读取失败静默降级：不打扰用户，等下次轮询重试 */ })
@@ -294,6 +317,9 @@ window.__ModuleLoader__.load({
         if (urlVal) chain = chain.then(function () { return setCredential(CRED_URL, urlVal) })
         if (user.trim()) chain = chain.then(function () { return setCredential(CRED_USER, user.trim()) })
         if (pw) chain = chain.then(function () { return setCredential(CRED_PASSWORD, pw) })
+        chain = chain.then(function () {
+          return postJson(API_SETTINGS, { provider: provider, remoteDir: remoteDir, autoSync: autoSync })
+        })
         chain.then(function () {
           showNotice('ok', T.saved)
           // 仅清空密码框（安全：密码不回显）；URL/用户名保留 —— 用户能看出已配置。
@@ -303,6 +329,31 @@ window.__ModuleLoader__.load({
         }).catch(function (e) {
           // set 失败（response.ok=false 已转 throw）—— 必须如实报错，不能再显示成功
           showNotice('error', T.saveFailed + (e && e.message ? e.message : String(e)))
+        }).finally(function () { setBusy('') })
+      }
+
+      // 清除配置：清空三个凭据并把服务商恢复默认，本地知识库不动。
+      function clearConfig() {
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(T.confirmClear)) return
+        setBusy('clear')
+        clearNotice()
+        postJson(API_CLEAR, {}).then(function (r) {
+          if (r && r.ok) {
+            setUrl('')
+            setUser('')
+            setPw('')
+            setUrlConfigured(false)
+            setPwConfigured(false)
+            setProvider((r.settings && r.settings.provider) || 'custom')
+            setRemoteDir((r.settings && r.settings.remoteDir) || 'local-kb-sync')
+            setAutoSync(!r.settings || r.settings.autoSync !== false)
+            showNotice('ok', T.cleared)
+          } else {
+            showNotice('error', (r && r.reason) || T.cleared)
+          }
+          refreshState()
+        }).catch(function (e) {
+          showNotice('error', e && e.message ? e.message : String(e))
         }).finally(function () { setBusy('') })
       }
 
@@ -402,7 +453,9 @@ window.__ModuleLoader__.load({
         '.dsh-lkb-status{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
         '.dsh-lkb-status-fail{color:var(--dsw-alias-state-error-primary);font-weight:500}',
         '.dsh-lkb-status-warn{color:var(--dsw-alias-state-warn-primary);font-weight:500}',
-        '.dsh-lkb-status-ok{color:var(--dsw-alias-state-success-primary)}'
+        '.dsh-lkb-status-ok{color:var(--dsw-alias-state-success-primary)}',
+        '.dsh-lkb-checkrow{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);cursor:pointer}',
+        '.dsh-lkb-switch{width:16px;height:16px;flex:none;accent-color:var(--dsw-alias-label-primary);cursor:pointer}'
       ].join('\n')
 
       // 构造 inputs
@@ -418,6 +471,41 @@ window.__ModuleLoader__.load({
         className: 'dsh-lkb-input', type: 'password', value: pw, autoComplete: 'new-password',
         placeholder: pwConfigured ? T.passwordPh : T.passwordEmptyPh,
         onChange: function (e) { setPw(e.target.value) }
+      })
+
+      // 服务商只是地址模板的快捷方式，不改变同步逻辑。
+      var PROVIDERS = [
+        { id: 'custom', label: T.providerCustom, url: '' },
+        { id: 'jianguoyun', label: '坚果云', url: 'https://dav.jianguoyun.com/dav/' },
+        { id: 'nextcloud', label: 'Nextcloud', url: '' },
+        { id: 'synology', label: '群晖', url: '' },
+        { id: 'alist', label: 'AList', url: '' }
+      ]
+      var providerSelect = h('select', {
+        className: 'dsh-lkb-input', value: provider,
+        onChange: function (e) {
+          var next = e.target.value
+          setProvider(next)
+          var preset = PROVIDERS.filter(function (p) { return p.id === next })[0]
+          if (preset && preset.url && !url.trim()) setUrl(preset.url)
+        }
+      }, PROVIDERS.map(function (p) { return h('option', { key: p.id, value: p.id }, p.label) }))
+
+      var remoteDirInput = h('input', {
+        className: 'dsh-lkb-input', type: 'text', value: remoteDir, placeholder: 'local-kb-sync',
+        onChange: function (e) { setRemoteDir(e.target.value) }
+      })
+
+      // 开关即时生效：不必点保存，避免「看起来关了其实没关」。
+      var autoSyncInput = h('input', {
+        type: 'checkbox', className: 'dsh-lkb-switch', checked: autoSync,
+        onChange: function (e) {
+          var next = e.target.checked
+          setAutoSync(next)
+          postJson(API_SETTINGS, { autoSync: next, provider: provider, remoteDir: remoteDir })
+            .then(function (r) { if (r && r.settings) setAutoSync(r.settings.autoSync !== false) })
+            .catch(function () { /* 保存失败下次 refreshState 会拉回真实值 */ })
+        }
       })
 
       // 状态条：只显示同步状态。校验结果（failed/warn）属于知识库内容质量，不在设置页提示。
@@ -498,12 +586,20 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsh-lkb-card' },
             h('div', { className: 'dsh-lkb-label' }, T.webdavTitle),
             h('p', { className: 'dsh-lkb-desc' }, T.webdavDesc),
+            h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.provider), providerSelect),
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.url), urlInput),
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.user), userInput),
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.password), pwInput),
+            h('div', { className: 'dsh-lkb-field' },
+              h('label', { className: 'dsh-lkb-label' }, T.remoteDir), remoteDirInput,
+              h('p', { className: 'dsh-lkb-desc' }, T.remoteDirHint)),
+            h('div', { className: 'dsh-lkb-field' },
+              h('label', { className: 'dsh-lkb-label' }, T.autoSync),
+              h('label', { className: 'dsh-lkb-checkrow' }, autoSyncInput, h('span', null, T.autoSyncHint))),
             h('div', { className: 'dsh-lkb-row' },
               h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-primary', onClick: saveConfig, disabled: busy !== '' }, busy === 'save' ? '…' : T.save),
-              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doTest, disabled: busy !== '' }, busy === 'test' ? T.testing : T.test)),
+              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doTest, disabled: busy !== '' }, busy === 'test' ? T.testing : T.test),
+              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: clearConfig, disabled: busy !== '' }, busy === 'clear' ? '…' : T.clearConfig)),
             h('div', { className: 'dsh-lkb-row' },
               h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-primary', onClick: doUpload, disabled: busy !== '' }, busy === 'sync' ? T.syncing : T.syncNow),
               h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doDownload, disabled: busy !== '' }, busy === 'download' ? T.downloading : T.download)),

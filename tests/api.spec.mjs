@@ -75,7 +75,7 @@ const check = (name, ok, detail = '') => {
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (ok ? '' : '  ' + detail))
 }
 
-check('注册 5 条路由', routes.length === 5, 'got ' + routes.length)
+check('注册 7 条路由', routes.length === 7, 'got ' + routes.length)
 const byPath = new Map(routes.map((r) => [r.path, r]))
 check('state 路由存在', byPath.has('/api/local-kb/state'))
 check('overview 路由存在', byPath.has('/api/local-kb/overview'))
@@ -84,6 +84,8 @@ check('sync 路由存在', byPath.has('/api/local-kb/sync'))
 check('test-link 路由存在', byPath.has('/api/local-kb/test-link'))
 check('download 路由存在', byPath.has('/api/local-kb/download'))
 check('download 只接受 POST', JSON.stringify(byPath.get('/api/local-kb/download')?.methods) === '["POST"]')
+check('settings 路由存在', byPath.has('/api/local-kb/settings'))
+check('clear 路由存在', byPath.has('/api/local-kb/clear'))
 check('state 只接受 GET', JSON.stringify(byPath.get('/api/local-kb/state')?.methods) === '["GET"]')
 check('sync 只接受 POST', JSON.stringify(byPath.get('/api/local-kb/sync')?.methods) === '["POST"]')
 check('test-link 只接受 POST', JSON.stringify(byPath.get('/api/local-kb/test-link')?.methods) === '["POST"]')

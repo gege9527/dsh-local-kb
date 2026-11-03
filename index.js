@@ -51,6 +51,14 @@ export const API_BASE = '/api/local-kb'
 export const SYNC_STATE_FILENAME = '.kb-sync-state.json'
 /** 远端子目录：所有同步内容放在 WebDAV 根下的这一个文件夹，避免污染远端根。 */
 export const REMOTE_SYNC_DIR = 'local-kb-sync'
+
+/** 远端根目录：只允许相对路径，挡掉空值、.. 与反斜杠。 */
+export function sanitizeRemoteDir(value) {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim().replace(/^\/+|\/+$/g, '')
+  if (trimmed === '' || trimmed.includes('..') || trimmed.includes('\\')) return undefined
+  return trimmed
+}
 export const SYNC_STATE_DEFAULT = {
   lastSyncAt: null,      // ISO 时间
   lastSyncStatus: null,  // 'ok' | 'failed' | null
@@ -365,6 +373,40 @@ export function kbGuard(kbRoot, { indexCap = true } = {}) {
 /* =========================================================================
  * 同步状态（内存单例 + 磁盘备份，设置页可查）
  * ======================================================================= */
+/** 插件设置：远端根目录、自动同步开关、服务商标识。 */
+export const SETTINGS_FILENAME = 'settings.json'
+
+const SETTINGS_DEFAULTS = { remoteDir: REMOTE_SYNC_DIR, autoSync: true, provider: 'custom' }
+
+export function loadPluginSettings(dshHome) {
+  try {
+    const raw = JSON.parse(readFileSync(join(dshHome, 'local-kb', SETTINGS_FILENAME), 'utf8'))
+    return {
+      remoteDir: sanitizeRemoteDir(raw.remoteDir) ?? SETTINGS_DEFAULTS.remoteDir,
+      autoSync: raw.autoSync !== false,
+      provider: typeof raw.provider === 'string' && raw.provider.trim() ? raw.provider.trim() : 'custom',
+    }
+  } catch {
+    return { ...SETTINGS_DEFAULTS }
+  }
+}
+
+export function savePluginSettings(dshHome, patch) {
+  const current = loadPluginSettings(dshHome)
+  const next = {
+    remoteDir: sanitizeRemoteDir(patch.remoteDir) ?? current.remoteDir,
+    autoSync: typeof patch.autoSync === 'boolean' ? patch.autoSync : current.autoSync,
+    provider: typeof patch.provider === 'string' && patch.provider.trim() ? patch.provider.trim() : current.provider,
+  }
+  try {
+    mkdirSync(join(dshHome, 'local-kb'), { recursive: true })
+    writeFileSync(join(dshHome, 'local-kb', SETTINGS_FILENAME), JSON.stringify(next, null, 2), 'utf8')
+  } catch {
+    // 设置写不进去也不影响本次会话
+  }
+  return next
+}
+
 /** 分片键：按一级目录切，projects 再按项目 id 切。 */
 function shardOf(rel) {
   const parts = rel.split('/')
@@ -628,18 +670,17 @@ async function ensureRemoteDirChain(base, relDir, auth) {
  *  - 目录用 MKCOL 逐级保证存在；
  *  - 成功后把本次清单写回状态文件（作为下次基准）。
  */
-export async function syncRoot({ kbRoot, url, user, password, previousMap }) {
+export async function syncRoot({ kbRoot, url, user, password, previousMap, remoteDir }) {
+  const dir = sanitizeRemoteDir(remoteDir) ?? REMOTE_SYNC_DIR
   const rootBase = url.replace(/\/+$/, '')
-  const base = rootBase + '/' + REMOTE_SYNC_DIR
+  const base = rootBase + '/' + dir
   const auth = basicAuth(user, password)
   _confirmedDirs.clear()
   _dirInFlight.clear() // 每次全新同步，目录确认缓存只作用于本次
-  // 确保远端根子目录 local-kb-sync 存在（幂等 MKCOL），所有内容放其下隔离。
+  // 确保远端目录存在：remoteDir 可能是多级路径，逐段 MKCOL（幂等）。
   {
-    const res = await webdavRequest(base, { method: 'MKCOL', auth })
-    if (!(res.status === 409 || res.status === 405 || (res.status >= 200 && res.status < 300))) {
-      throw new Error(`创建远端同步目录 ${REMOTE_SYNC_DIR} 失败（HTTP ${res.status}）`)
-    }
+    _confirmedDirs.add(rootBase)
+    await ensureRemoteDirChain(rootBase, dir, auth)
     _confirmedDirs.add(base)
   }
 
@@ -713,8 +754,9 @@ export async function syncRoot({ kbRoot, url, user, password, previousMap }) {
  * 只覆盖，不删除：本地多出来的文件保留 —— 删除本地内容只能由用户做。
  * 远端路径一律校验落在 kbRoot 内，防止 ../ 或异常 href 写到知识库外面。
  */
-export async function downloadRoot({ kbRoot, url, user, password }) {
-  const base = url.replace(/\/+$/, '') + '/' + REMOTE_SYNC_DIR
+export async function downloadRoot({ kbRoot, url, user, password, remoteDir }) {
+  const dir = sanitizeRemoteDir(remoteDir) ?? REMOTE_SYNC_DIR
+  const base = url.replace(/\/+$/, '') + '/' + dir
   const auth = basicAuth(user, password)
   const root = resolve(kbRoot)
   const files = await listRemote({ base, auth })
@@ -888,6 +930,8 @@ export function apply(ctx, config = {}) {
     ? resolve(config.kbRoot.trim())
     : resolveKbRoot()
   const dshHome = resolveDshHome()
+  // 运行时设置：远端根目录、自动同步开关。改设置页即时生效，不必重启。
+  const pluginSettings = loadPluginSettings(dshHome)
 
   // ---- 技能安装：副本 + AGENTS.md 常驻块（幂等，fire-and-forget，绝不阻断启动） ----
   if (config.installSkill !== false) {
@@ -1132,6 +1176,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       const password = (await resolveRef(creds, CRED_PASSWORD_REF)) || ''
       const result = await syncRoot({
         kbRoot, url, user, password, previousMap: syncState.fileMapObject(),
+        remoteDir: pluginSettings.remoteDir,
       })
       await syncState.saveFileMap(new Map(Object.entries(result.fileMap)))
       await syncState.record({
@@ -1164,6 +1209,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
 
   ctx.on('tools/result', (exec, result) => {
     try {
+      if (pluginSettings.autoSync === false) return // 自动同步关闭：只留手动上传
       if (!exec || !exec.arguments || typeof exec.arguments !== 'object') return
       if (result && result.isError) return // 只同步写入成功的调用
       const args = exec.arguments
@@ -1378,7 +1424,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       return
     }
     const handlers = createApiHandlers({
-      kbRoot, dshHome, syncState, runSync, getCredentials: () => ctx.get('credentials'),
+      kbRoot, dshHome, syncState, runSync, pluginSettings,
+      getCredentials: () => ctx.get('credentials'),
     })
     // 每条路都必须带 requestBody：dsh 靠它决定请求体怎么喂给 handler。
     const routes = [
@@ -1387,6 +1434,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       { path: API_BASE + '/sync', methods: ['POST'], requestBody: 'buffered', fetch: handlers.sync },
       { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
       { path: API_BASE + '/download', methods: ['POST'], requestBody: 'buffered', fetch: handlers.download },
+      { path: API_BASE + '/settings', methods: ['POST'], requestBody: 'buffered', fetch: handlers.settings },
+      { path: API_BASE + '/clear', methods: ['POST'], requestBody: 'buffered', fetch: handlers.clear },
     ]
     const failures = []
     for (const route of routes) {
@@ -1434,7 +1483,7 @@ function readSkillBody() {
 }
 
 /** 组装设置页 API 的三个 handler（Web Fetch API：Request → Response）。 */
-function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials }) {
+function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings, getCredentials }) {
   const resolveRefFor = async (ref) => {
     const creds = getCredentials()
     if (!creds || typeof creds.resolve !== 'function') return undefined
@@ -1465,6 +1514,11 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials
           lastCheckAt: st.lastCheckAt,
           lastCheckStatus: st.lastCheckStatus,
           lastCheckError: st.lastCheckError,
+        },
+        settings: {
+          remoteDir: pluginSettings.remoteDir,
+          autoSync: pluginSettings.autoSync,
+          provider: pluginSettings.provider,
         },
         installed: await skillInstalled(dshHome),
       })
@@ -1543,6 +1597,44 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials
       return jsonResponse(200, { ok: true, kbRoot, projects, docs, docDirs })
     },
 
+    /** POST /api/local-kb/settings：保存远端根目录、自动同步开关、服务商标识。 */
+    settings: async (request) => {
+      let body = {}
+      try {
+        body = await request.json()
+      } catch {
+        body = {}
+      }
+      if (body === null || typeof body !== 'object') body = {}
+      const next = savePluginSettings(dshHome, body)
+      Object.assign(pluginSettings, next)
+      return jsonResponse(200, { ok: true, settings: next })
+    },
+
+    /** POST /api/local-kb/clear：清除 WebDAV 凭据并恢复默认设置。 */
+    clear: async () => {
+      const creds = getCredentials()
+      const cleared = []
+      for (const ref of [CRED_URL_REF, CRED_USER_REF, CRED_PASSWORD_REF]) {
+        try {
+          if (typeof creds?.unset === 'function') {
+            await creds.unset(ref)
+            cleared.push(ref)
+          }
+        } catch {
+          // 凭据不存在或服务不可用：忽略，页面仍显示已清空
+        }
+      }
+      const next = savePluginSettings(dshHome, {
+        remoteDir: REMOTE_SYNC_DIR,
+        autoSync: pluginSettings.autoSync,
+        provider: 'custom',
+      })
+      Object.assign(pluginSettings, next)
+      await syncState.record({ lastSyncStatus: null, lastError: null, lastSyncAt: null, lastTrigger: null })
+      return jsonResponse(200, { ok: true, cleared, settings: next })
+    },
+
     /** POST /api/local-kb/sync：上传（本地覆盖云端，远端多余文件删除）。 */
     sync: async () => {
       const result = await runSync({ trigger: 'manual' })
@@ -1556,7 +1648,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials
       const user = (await resolveRefFor(CRED_USER_REF)) || ''
       const password = (await resolveRefFor(CRED_PASSWORD_REF)) || ''
       try {
-        const result = await downloadRoot({ kbRoot, url, user, password })
+        const result = await downloadRoot({ kbRoot, url, user, password, remoteDir: pluginSettings.remoteDir })
         await syncState.record({
           lastSyncAt: new Date().toISOString(),
           lastSyncStatus: result.failed.length === 0 ? 'ok' : 'failed',
