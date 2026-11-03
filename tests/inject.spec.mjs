@@ -23,6 +23,8 @@ const write = (rel, text) => {
 }
 
 write('memory/MEMORY.md', '# 全局\n- [用户偏好](pref.md) — 前端语境\n')
+// 远程设备项目：没有本机路径是正常的，不该进「未登记」
+write('projects/remote-box/remote-box.md', '---\ntitle: remote-box\ntype: ops-project\ndescription: 远程服务器\n---\n')
 write('paths.yaml', [
   '# 注释行',
   'demo:',
@@ -104,7 +106,8 @@ check('少于阈值不折叠', !flatMap.includes('（子：') && flatMap.include
 
 // 地图
 const map = knowledgeMapText({ kbRoot: root, cwd: nested })
-check('地图列项目', map.includes('项目（2）') && map.includes('demo') && map.includes('other'))
+check('地图列项目', map.includes('项目（3）') && map.includes('demo') && map.includes('other') && map.includes('remote-box'))
+check('远程设备项目不算未登记', !map.includes('未登记（paths.yaml 没有条目）：') || !map.split('未登记')[1].includes('remote-box'), map)
 check('地图标出当前项目', map.includes('当前项目：demo →'))
 check('地图带概览', map.includes('演示项目的一句话说明'))
 check('地图带文档目录', map.includes('文档：api、design'))

@@ -65,6 +65,14 @@ export function projectForPath(cwd, entries) {
   return best
 }
 
+/** 项目页 frontmatter 的 type（code-project / ops-project / doc …），读不到返回 undefined。 */
+export function projectKind(kbRoot, id, cache) {
+  const file = readCached(join(kbRoot, 'projects', id, id + '.md'), cache)
+  if (file === undefined) return undefined
+  const match = file.text.slice(0, 2048).match(/^type:\s*(\S+)/m)
+  return match ? match[1] : undefined
+}
+
 /** 目录是否存在（缓存 10 秒，避免每步 stat 一遍所有项目路径）。 */
 function pathExists(dir, cache) {
   const key = 'exists:' + dir
@@ -201,7 +209,8 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     return ''
   }
   const mapped = new Set(entries.map((entry) => entry.id))
-  const missing = dirs.filter((id) => !mapped.has(id))
+  // ops-project（远程设备/服务器）本来就没有本地代码，不算「未登记」。
+  const missing = dirs.filter((id) => !mapped.has(id) && projectKind(kbRoot, id, cache) !== 'ops-project')
   // 路径失效：登记了但指向别的机器的目录（新设备下载 paths.yaml 后的常态）。
   const stale = entries.filter((entry) => !pathExists(entry.path, cache)).map((entry) => entry.id)
 

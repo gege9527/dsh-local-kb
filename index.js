@@ -31,6 +31,7 @@ import {
   knowledgeMapText,
   memoryIndexText,
   parsePathsYaml,
+  projectKind,
 } from './inject.js'
 
 // 任务内提醒的消息工厂：优先用 DSH 官方 createUserMessage；解析失败（测试/非 DSH 环境）
@@ -1572,6 +1573,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
       } catch {
         projectDirs = []
       }
+      const kindCache = new Map()
       for (const id of projectDirs) {
         const memoryDir = join(kbRoot, 'projects', id, 'memory')
         let memories = 0
@@ -1587,10 +1589,12 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
           indexLines = 0
         }
         const localPath = entries.get(id)
-        // 三种状态分开报：ok / stale（登记的是别的机器的路径）/ unregistered
-        const pathState = localPath === undefined
-          ? 'unregistered'
-          : existsSyncSafe(localPath) ? 'ok' : 'stale'
+        // 四种状态：ok / stale（登记的是别的机器的路径）/ unregistered / remote（远程设备，本就没有本地代码）
+        const pathState = projectKind(kbRoot, id, kindCache) === 'ops-project'
+          ? 'remote'
+          : localPath === undefined
+            ? 'unregistered'
+            : existsSyncSafe(localPath) ? 'ok' : 'stale'
         projects.push({
           id,
           path: localPath ?? null,
