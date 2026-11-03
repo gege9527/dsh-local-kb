@@ -376,14 +376,16 @@ export function kbGuard(kbRoot, { indexCap = true } = {}) {
 /** 插件设置：远端根目录、自动同步开关、服务商标识。 */
 export const SETTINGS_FILENAME = 'settings.json'
 
-const SETTINGS_DEFAULTS = { remoteDir: REMOTE_SYNC_DIR, autoSync: true, provider: 'custom' }
+// 自动同步默认关闭：避免新装用户一写入就把远端备份覆盖掉。
+const SETTINGS_DEFAULTS = { remoteDir: REMOTE_SYNC_DIR, autoSync: false, provider: 'custom' }
 
 export function loadPluginSettings(dshHome) {
   try {
     const raw = JSON.parse(readFileSync(join(dshHome, 'local-kb', SETTINGS_FILENAME), 'utf8'))
     return {
       remoteDir: sanitizeRemoteDir(raw.remoteDir) ?? SETTINGS_DEFAULTS.remoteDir,
-      autoSync: raw.autoSync !== false,
+      // 只有明确写了 true 才开；旧文件没有这个字段 → 按默认关闭
+      autoSync: raw.autoSync === true,
       provider: typeof raw.provider === 'string' && raw.provider.trim() ? raw.provider.trim() : 'custom',
     }
   } catch {

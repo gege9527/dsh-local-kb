@@ -100,8 +100,8 @@ window.__ModuleLoader__.load({
       remoteDirHint: isZh() ? '远端只写这个目录，默认 local-kb-sync' : 'Only this cloud folder is written; default local-kb-sync',
       autoSync: isZh() ? '自动同步' : 'Auto upload',
       autoSyncHint: isZh()
-        ? '开启后每次写入知识库都会自动上传；关闭后仍需点「上传到云端」。'
-        : 'When on, every KB write uploads automatically; when off, use Upload manually.',
+        ? '默认关闭。打开后每次写入知识库都会自动上传；关闭时需要手动点「上传到云端」。'
+        : 'Off by default. When on, every KB write uploads automatically; when off, use Upload manually.',
       clearConfig: isZh() ? '清除配置' : 'Clear',
       confirmClear: isZh()
         ? '清除 WebDAV 地址、账户与密码？本地知识库不受影响。'
@@ -270,7 +270,7 @@ window.__ModuleLoader__.load({
       var [showAllProjects, setShowAllProjects] = useState(false)
       var [provider, setProvider] = useState('custom')
       var [remoteDir, setRemoteDir] = useState('local-kb-sync')
-      var [autoSync, setAutoSync] = useState(true)
+      var [autoSync, setAutoSync] = useState(false)
 
       function refreshState() {
         return getJson(API_STATE).then(function (data) {

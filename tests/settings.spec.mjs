@@ -23,8 +23,16 @@ check('拒绝非字符串', sanitizeRemoteDir(42) === undefined)
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-settings-'))
 const defaults = loadPluginSettings(home)
 check('默认远端目录', defaults.remoteDir === 'local-kb-sync', JSON.stringify(defaults))
-check('默认开自动同步', defaults.autoSync === true)
+check('默认关自动同步', defaults.autoSync === false)
 check('默认服务商', defaults.provider === 'custom')
+
+// 旧文件没有 autoSync 字段：按默认关闭处理，不要偷偷打开
+const legacyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-settings-legacy-'))
+fs.mkdirSync(path.join(legacyHome, 'local-kb'), { recursive: true })
+fs.writeFileSync(path.join(legacyHome, 'local-kb', 'settings.json'), JSON.stringify({ remoteDir: 'old-dir' }))
+const legacy = loadPluginSettings(legacyHome)
+check('旧配置缺字段时默认关闭', legacy.autoSync === false, JSON.stringify(legacy))
+check('旧配置的远端目录保留', legacy.remoteDir === 'old-dir', JSON.stringify(legacy))
 
 const saved = savePluginSettings(home, { remoteDir: 'my-kb', autoSync: false, provider: 'jianguoyun' })
 check('保存返回新值', saved.remoteDir === 'my-kb' && saved.autoSync === false && saved.provider === 'jianguoyun', JSON.stringify(saved))
@@ -42,4 +50,5 @@ check('非法远端目录保留旧值', bad.remoteDir === 'my-kb', JSON.stringif
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
 fs.rmSync(home, { recursive: true, force: true })
+fs.rmSync(legacyHome, { recursive: true, force: true })
 if (failed > 0) process.exitCode = 1
