@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
     var API_SYNC = 'api/local-kb/sync'
     var API_TEST = 'api/local-kb/test-link'
     var API_OVERVIEW = 'api/local-kb/overview'
+    var API_DOWNLOAD = 'api/local-kb/download'
 
     var CRED_URL = 'dsh_local_kb_webdav_url'
     var CRED_USER = 'dsh_local_kb_webdav_user'
@@ -65,8 +66,8 @@ window.__ModuleLoader__.load({
       notInstalled: isZh() ? '技能尚未安装到 $DSH_HOME/skills/local-kb' : 'Skill not installed to $DSH_HOME/skills/local-kb',
       webdavTitle: isZh() ? 'WebDAV 同步' : 'WebDAV Sync',
       webdavDesc: isZh()
-        ? '配置后，AI 向知识库写入内容会自动同步到远端（异步，失败不阻塞对话）。'
-        : 'When configured, KB writes sync to the remote automatically (async; a failure never blocks the conversation).',
+        ? '写入知识库后自动上传。上传 = 本地覆盖云端（云端多出的文件删除）；下载 = 云端覆盖本地同名文件（本地多出的保留）。'
+        : 'KB writes upload automatically. Upload = local overwrites cloud (extra cloud files are deleted); Download = cloud overwrites local files (local-only files are kept).',
       url: isZh() ? 'WebDAV 链接' : 'WebDAV URL',
       urlPh: isZh() ? 'https://dav.example.com/kb' : 'https://dav.example.com/kb',
       user: isZh() ? '用户名' : 'Username',
@@ -78,10 +79,19 @@ window.__ModuleLoader__.load({
       saveFailed: isZh() ? '保存失败：' : 'Save failed: ',
       test: isZh() ? '测试链接' : 'Test Link',
       testing: isZh() ? '测试中…' : 'Testing…',
-      syncNow: isZh() ? '立即同步' : 'Sync Now',
+      syncNow: isZh() ? '上传到云端' : 'Upload',
       syncTimeout: isZh() ? '同步超时（30 秒）' : 'Sync timed out (30s)',
-      syncing: isZh() ? '同步中…' : 'Syncing…',
-      syncOk: isZh() ? '同步完成' : 'Sync complete',
+      syncing: isZh() ? '上传中…' : 'Uploading…',
+      syncOk: isZh() ? '上传完成' : 'Upload complete',
+      download: isZh() ? '从云端下载' : 'Download',
+      downloading: isZh() ? '下载中…' : 'Downloading…',
+      downloadOk: isZh() ? '下载完成' : 'Download complete',
+      confirmUpload: isZh()
+        ? '上传会用本地知识库覆盖云端：云端有、本地没有的文件会被删除。确定继续？'
+        : 'Upload overwrites the cloud with your local KB: files that exist only in the cloud will be deleted. Continue?',
+      confirmDownload: isZh()
+        ? '下载会用云端覆盖本地同名文件。本地多出来的文件不会被删除。确定继续？'
+        : 'Download overwrites local files with the cloud copies. Files that exist only locally are kept. Continue?',
       never: isZh() ? '从未同步' : 'Never synced',
       lastOk: isZh() ? '上次同步成功' : 'Last sync succeeded',
       lastFailed: isZh() ? '上次同步失败' : 'Last sync failed',
@@ -307,20 +317,44 @@ window.__ModuleLoader__.load({
         }).finally(function () { setBusy('') })
       }
 
-      function doSync() {
+      // 上传：本地覆盖云端（远端多出的删除）。覆盖是破坏性操作，先让用户确认。
+      function doUpload() {
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(T.confirmUpload)) return
         setBusy('sync')
         clearNotice()
         postJson(API_SYNC, {}).then(function (r) {
           if (r && r.ok) {
-            showNotice('ok', T.syncOk + (r.pushed ? '（' + T.pushed.replace('{n}', r.pushed) + '）' : ''))
+            var extra = []
+            if (r.pushed) extra.push(T.pushed.replace('{n}', r.pushed))
+            if (r.deleted && r.deleted.length) extra.push((isZh() ? '远端删除 ' + r.deleted.length + ' 个' : r.deleted.length + ' deleted'))
+            showNotice('ok', T.syncOk + (extra.length ? '（' + extra.join('，') + '）' : ''))
           } else {
-            showNotice('error', (r && r.reason) || T.syncOk )
+            showNotice('error', (r && (r.reason || r.lastError)) || T.syncOk)
           }
           if (r) setSyncState(r.state || {})
+          refreshState()
         }).catch(function (e) {
           var msg = e && e.message ? e.message : String(e)
           if (e && e.name === 'AbortError') msg = T.syncTimeout
           showNotice('error', msg)
+        }).finally(function () { setBusy('') })
+      }
+
+      // 下载：云端覆盖本地同名文件；本地多出的保留（插件不删本地内容）。
+      function doDownload() {
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(T.confirmDownload)) return
+        setBusy('download')
+        clearNotice()
+        postJson(API_DOWNLOAD, {}).then(function (r) {
+          if (r && r.ok) {
+            showNotice('ok', T.downloadOk + (r.written ? '（' + (isZh() ? '覆盖 ' + r.written + ' 个文件' : r.written + ' files') + '）' : ''))
+          } else {
+            var reason = (r && r.reason) || (r && r.failed && r.failed.length ? (isZh() ? r.failed.length + ' 个文件失败' : r.failed.length + ' failed') : '')
+            showNotice('error', reason || T.downloadOk)
+          }
+          refreshState()
+        }).catch(function (e) {
+          showNotice('error', e && e.message ? e.message : String(e))
         }).finally(function () { setBusy('') })
       }
 
@@ -469,8 +503,10 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-lkb-field' }, h('label', { className: 'dsh-lkb-label' }, T.password), pwInput),
             h('div', { className: 'dsh-lkb-row' },
               h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-primary', onClick: saveConfig, disabled: busy !== '' }, busy === 'save' ? '…' : T.save),
-              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doTest, disabled: busy !== '' }, busy === 'test' ? T.testing : T.test),
-              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doSync, disabled: busy !== '' }, busy === 'sync' ? T.syncing : T.syncNow)),
+              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doTest, disabled: busy !== '' }, busy === 'test' ? T.testing : T.test)),
+            h('div', { className: 'dsh-lkb-row' },
+              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-primary', onClick: doUpload, disabled: busy !== '' }, busy === 'sync' ? T.syncing : T.syncNow),
+              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost', onClick: doDownload, disabled: busy !== '' }, busy === 'download' ? T.downloading : T.download)),
             statusEl,
             noticeEl)
         )

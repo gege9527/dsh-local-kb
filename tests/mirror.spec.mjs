@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { syncRoot } from '../index.js'
+import { downloadRoot, syncRoot } from '../index.js'
 
 // ---- 远端镜像：本地什么样远端什么样；垃圾文件排除；多余项删除 ----
 
@@ -25,6 +25,12 @@ const server = http.createServer((req, res) => {
     remote.delete(rel)
     res.writeHead(204)
     res.end()
+    return
+  }
+  if (req.method === 'GET') {
+    if (!remote.has(rel)) { res.writeHead(404); res.end(); return }
+    res.writeHead(200, { 'content-type': 'application/octet-stream' })
+    res.end(remote.get(rel))
     return
   }
   if (req.method === 'PROPFIND') {
@@ -96,6 +102,17 @@ const third = await syncRoot({ kbRoot: kb, url, user: 'u', password: 'p', previo
 check('新增文件被推送', third.pushed.includes('docs/new.md'), JSON.stringify(third.pushed))
 check('本地删除被镜像到远端', third.deleted.includes('docs/a.md'), JSON.stringify(third.deleted))
 check('远端不再有该文件', !remote.has('docs/a.md'))
+
+// 下载方向：云端覆盖本地同名文件；本地多出来的保留
+remote.set('docs/a.md', 'cloud version')
+remote.set('docs/cloud-only.md', 'only in cloud')
+fs.writeFileSync(path.join(kb, 'docs/local-only.md'), 'only local')
+const down = await downloadRoot({ kbRoot: kb, url, user: 'u', password: 'p' })
+check('下载写入云端文件', down.written.includes('docs/a.md') && down.written.includes('docs/cloud-only.md'), JSON.stringify(down.written))
+check('云端内容覆盖本地', fs.readFileSync(path.join(kb, 'docs/a.md'), 'utf8') === 'cloud version')
+check('云端独有文件落到本地', fs.existsSync(path.join(kb, 'docs/cloud-only.md')))
+check('本地独有文件不被删除', fs.existsSync(path.join(kb, 'docs/local-only.md')))
+check('下载失败清单为空', down.failed.length === 0, JSON.stringify(down.failed))
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)

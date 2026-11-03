@@ -708,6 +708,44 @@ export async function syncRoot({ kbRoot, url, user, password, previousMap }) {
 }
 
 /**
+ * 从远端下载并覆盖本地同名文件（下载方向的镜像）。
+ *
+ * 只覆盖，不删除：本地多出来的文件保留 —— 删除本地内容只能由用户做。
+ * 远端路径一律校验落在 kbRoot 内，防止 ../ 或异常 href 写到知识库外面。
+ */
+export async function downloadRoot({ kbRoot, url, user, password }) {
+  const base = url.replace(/\/+$/, '') + '/' + REMOTE_SYNC_DIR
+  const auth = basicAuth(user, password)
+  const root = resolve(kbRoot)
+  const files = await listRemote({ base, auth })
+  const written = []
+  const failed = []
+
+  await mapLimit([...files], 4, async (rel) => {
+    try {
+      const res = await webdavRequest(joinUrl(base, rel), { method: 'GET', timeoutMs: 30000, auth })
+      if (res.status < 200 || res.status >= 300) {
+        failed.push({ rel, reason: 'HTTP ' + res.status })
+        return
+      }
+      const target = resolve(join(root, rel))
+      if (target !== root && !target.startsWith(root + sep)) {
+        failed.push({ rel, reason: '路径越界' })
+        return
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, res.body)
+      written.push(rel)
+    } catch (error) {
+      failed.push({ rel, reason: error instanceof Error ? error.message : String(error) })
+    }
+  })
+
+  return { written, failed, total: files.size }
+}
+
+
+/**
  * 同步排除清单：系统垃圾与插件自身状态。
  * 排除项视同「本地不存在」——远端若有同名文件，镜像阶段会删掉，否则远端永远脏。
  */
@@ -1348,6 +1386,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       { path: API_BASE + '/overview', methods: ['GET'], requestBody: 'buffered', fetch: handlers.overview },
       { path: API_BASE + '/sync', methods: ['POST'], requestBody: 'buffered', fetch: handlers.sync },
       { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
+      { path: API_BASE + '/download', methods: ['POST'], requestBody: 'buffered', fetch: handlers.download },
     ]
     const failures = []
     for (const route of routes) {
@@ -1504,10 +1543,44 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, getCredentials
       return jsonResponse(200, { ok: true, kbRoot, projects, docs, docDirs })
     },
 
-    /** POST /api/local-kb/sync：立即同步。 */
+    /** POST /api/local-kb/sync：上传（本地覆盖云端，远端多余文件删除）。 */
     sync: async () => {
       const result = await runSync({ trigger: 'manual' })
       return jsonResponse(200, { ok: result.ok, ...result })
+    },
+
+    /** POST /api/local-kb/download：从云端下载，覆盖本地同名文件（本地多余文件保留）。 */
+    download: async () => {
+      const url = await resolveRefFor(CRED_URL_REF)
+      if (!url) return jsonResponse(200, { ok: false, reason: '未配置 WebDAV 链接' })
+      const user = (await resolveRefFor(CRED_USER_REF)) || ''
+      const password = (await resolveRefFor(CRED_PASSWORD_REF)) || ''
+      try {
+        const result = await downloadRoot({ kbRoot, url, user, password })
+        await syncState.record({
+          lastSyncAt: new Date().toISOString(),
+          lastSyncStatus: result.failed.length === 0 ? 'ok' : 'failed',
+          lastError: result.failed.length === 0 ? null : result.failed.length + ' 个文件下载失败',
+          lastTrigger: 'download',
+          syncedFiles: result.written.length,
+          deletedFiles: 0,
+        })
+        return jsonResponse(200, {
+          ok: result.failed.length === 0,
+          written: result.written.length,
+          failed: result.failed,
+          total: result.total,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        await syncState.record({
+          lastSyncAt: new Date().toISOString(),
+          lastSyncStatus: 'failed',
+          lastError: message,
+          lastTrigger: 'download',
+        })
+        return jsonResponse(200, { ok: false, reason: message })
+      }
     },
 
     /** POST /api/local-kb/test-link：用表单值（空则回退已存凭据）测 WebDAV 连通性。 */
