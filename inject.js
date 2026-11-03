@@ -193,14 +193,19 @@ function projectDocNames(kbRoot, id) {
   }
 }
 
-/** 跨项目 docs/ 的目录名（顶层分类，不递归）。 */
-function globalDocDirs(kbRoot) {
+/** docs/ 的顶层分类目录与根层单篇文档（不递归、不报数量——数量会变）。 */
+function globalDocs(kbRoot) {
   try {
-    return readdirSync(join(kbRoot, 'docs'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
+    const entries = readdirSync(join(kbRoot, 'docs'), { withFileTypes: true })
+    const dirs = []
+    const files = []
+    for (const entry of entries) {
+      if (entry.isDirectory()) dirs.push(entry.name)
+      else if (entry.isFile() && entry.name.endsWith('.md')) files.push(entry.name.replace(/\.md$/, ''))
+    }
+    return { dirs, files }
   } catch {
-    return []
+    return { dirs: [], files: [] }
   }
 }
 
@@ -267,8 +272,13 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')
   }
 
-  const docDirs = globalDocDirs(kbRoot)
-  if (docDirs.length > 0) lines.push('跨项目文档：' + docDirs.join('、'))
+  const docs = globalDocs(kbRoot)
+  if (docs.dirs.length > 0 || docs.files.length > 0) {
+    const parts = []
+    if (docs.dirs.length > 0) parts.push(docs.dirs.join('、'))
+    if (docs.files.length > 0) parts.push('单篇：' + docs.files.join('、'))
+    lines.push('文档 docs/：' + parts.join('；'))
+  }
   lines.push(`检索：grep -rn "关键词" ${join(kbRoot, 'projects', '*', '*.md')} ${join(kbRoot, 'docs')}`)
   return lines.join('\n')
 }

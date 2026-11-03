@@ -112,7 +112,10 @@ check('地图列项目', map.includes('项目（3）') && map.includes('demo') &
 check('远程设备项目不算未登记', !map.includes('未登记（paths.yaml 没有条目）：') || !map.split('未登记')[1].includes('remote-box'), map)
 check('地图标出当前项目', map.includes('当前项目：demo →'))
 check('地图带概览', map.includes('演示项目的一句话说明'))
-check('地图带文档目录', map.includes('文档：api、design'))
+check('地图带当前项目 docs 文件名', map.includes('文档：api、design'))
+check('地图列外层 docs 目录', map.includes('文档 docs/：DSH'))
+check('地图列外层根层单篇', map.includes('单篇：单文件'), map)
+check('文档行不带数量', !/DSH\(\d+\)/.test(map), map)
 check('地图不读文档正文', !map.includes('# api'))
 check('地图给检索命令', map.includes('grep -rn'))
 
