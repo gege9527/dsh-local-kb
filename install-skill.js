@@ -37,6 +37,7 @@
  * Zero dependencies, plain ESM, node: builtins only — same ethos as index.js.
  */
 import { constants as FS } from 'node:fs'
+import { lstatSync, realpathSync } from 'node:fs'
 import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
@@ -110,51 +111,72 @@ export async function installSkill(opts = {}) {
     return outcome('error', dest, errorMessage(payloadFiles.error))
   }
 
-  // 只缺则补：目标目录已存在（无论内容新旧、是否与 payload 一致），一律视为
-  // 用户/其他工具维护的源目录，绝不覆盖 —— local-kb 技能被非 DSH 环境共用，
-  // 插件的 payload 只是「目标缺失时」的兜底安装源。
-  const destHasSkill = await access(join(dest, 'SKILL.md'), FS.F_OK).then(() => true).catch(() => false)
-  if (destHasSkill) {
-    const agentsResult = opts.appendRules === false
-      ? { status: 'skipped', path: resolve(join(dshHome, AGENTS_FILENAME)), detail: 'appendRules is false' }
-      : await appendRulesToAgents(dshHome, payloadDir)
-    return { ...outcome('present', dest), agents: agentsResult }
-  }
-
-  const copied = await copyPayload(payloadDir, dest)
-  if (!copied.ok) return outcome('error', dest, copied.error)
-
+  // 有就覆盖，保持最新：逐文件比对 payload 与目标，内容不同才写。
+  // 目标若是软链（例如 skills/local-kb -> cc-switch 的共享技能库），写入会跟随
+  // 到真实目录 —— 这是预期行为，结果里如实报告真实路径。
+  let symlink = false
   try {
-    const payloadVersion = await readFile(join(payloadDir, VERSION_FILENAME), 'utf8').catch(() => undefined)
-    if (payloadVersion !== undefined) {
-      await writeFile(join(dest, VERSION_FILENAME), payloadVersion, 'utf8')
-    }
-  } catch (error) {
-    return outcome('error', dest, `payload copied but version marker failed: ${errorMessage(error)}`)
+    symlink = lstatSync(dest).isSymbolicLink()
+  } catch {
+    symlink = false
   }
 
-  const agentsResult = opts.appendRules === false
-    ? { status: 'skipped', path: resolve(join(dshHome, AGENTS_FILENAME)), detail: 'appendRules is false' }
-    : await appendRulesToAgents(dshHome, payloadDir)
-  return { ...outcome('installed', dest), agents: agentsResult }
+  const changed = []
+  for (const src of payloadFiles) {
+    const rel = relative(payloadDir, src)
+    const target = join(dest, rel)
+    const next = await readFile(src)
+    let current
+    try {
+      current = await readFile(target)
+    } catch {
+      current = undefined
+    }
+    if (current !== undefined && current.equals(next)) continue
+    changed.push({ rel, target, next })
+  }
+
+  const agentsPath = resolve(join(dshHome, AGENTS_FILENAME))
+  const blockPlan = opts.appendRules === false
+    ? { status: 'skipped', path: agentsPath, detail: 'appendRules is false' }
+    : await planRulesBlock(agentsPath, payloadDir)
+
+  // 任一将要变化才备份：只保留一份，先清空再写，不散落 .kb-bak 文件。
+  let backup
+  if (changed.length > 0 || blockPlan.status === 'update') {
+    backup = await backupBefore(dshHome, dest, agentsPath)
+  }
+
+  for (const item of changed) {
+    try {
+      await mkdir(dirname(item.target), { recursive: true })
+      await writeFile(item.target, item.next)
+    } catch (error) {
+      return outcome('error', dest, `write ${item.rel} failed: ${errorMessage(error)}`)
+    }
+  }
+
+  const agentsResult = blockPlan.status === 'update'
+    ? await applyRulesBlock(blockPlan)
+    : blockPlan
+
+  const status = changed.length === 0 && agentsResult.status !== 'update'
+    ? 'present'
+    : 'installed'
+  return {
+    ...outcome(status, dest),
+    changed: changed.length,
+    ...(backup === undefined ? {} : { backup }),
+    ...(symlink ? { symlinkTarget: realpathOf(dest) } : {}),
+    agents: agentsResult,
+  }
 }
 
 /**
- * Sync `references/agents-snippet.md` from the payload into `$DSH_HOME/AGENTS.md`.
- *
- * The local-kb `agents-snippet.md` ALREADY carries `<!-- KB_LOCAL_START -->` and
- * `<!-- KB_LOCAL_END -->` around its always-on block, so the snippet body IS the
- * block: no extra wrapping is applied here.
- *
- * 只缺则补：
- *  - No start marker in AGENTS.md yet: the block is appended after existing content.
- *  - Start marker present: treated as already installed — never overwritten. The
- *    user (or the local-kb skill's own sync) may have a newer block in place.
- *
- * A start marker with no matching end marker is refused rather than guessed at.
+ * 计算 AGENTS.md 的常驻块要怎么改：没有就追加，有就用 payload 覆盖标记之间。
+ * 只做计划，不写盘 —— installSkill 需要在写之前统一备份一次。
  */
-export async function appendRulesToAgents(dshHome, payloadDir, opts = {}) {
-  const agentsPath = resolve(join(dshHome, AGENTS_FILENAME))
+async function planRulesBlock(agentsPath, payloadDir) {
   const snippetPath = resolve(join(payloadDir, RULES_SNIPPET))
 
   let snippet
@@ -186,33 +208,100 @@ export async function appendRulesToAgents(dshHome, payloadDir, opts = {}) {
   }
 
   const startAt = current.indexOf(AGENTS_MARKER_START)
-  if (startAt !== -1) {
-    const endAt = current.indexOf(AGENTS_MARKER_END, startAt)
-    if (endAt === -1) {
-      // 只有开头没有结尾：不猜，交给用户
-      return { status: 'error', path: agentsPath, detail: `${AGENTS_MARKER_START} 没有对应的 ${AGENTS_MARKER_END}` }
-    }
-    const existing = current.slice(startAt, endAt + AGENTS_MARKER_END.length)
-    // 同版本或更高版本：不动（用户可能手动改过）。低版本才刷新，且只换标记之间。
-    if (blockVersion(existing) >= blockVersion(block)) {
-      return { status: 'present', path: agentsPath }
-    }
-    const next = current.slice(0, startAt) + block + current.slice(endAt + AGENTS_MARKER_END.length)
-    try {
-      await writeFile(agentsPath, next, 'utf8')
-    } catch (error) {
-      return { status: 'error', path: agentsPath, detail: errorMessage(error) }
-    }
-    return { status: 'updated', path: agentsPath }
-  }
+  if (startAt === -1) return { status: 'append', path: agentsPath, current, currentExists, block }
 
-  const prefix = currentExists && !current.endsWith('\n') ? '\n\n' : currentExists ? '\n' : ''
-  try {
-    await writeFile(agentsPath, `${current}${prefix}${block}\n`, 'utf8')
-  } catch (error) {
-    return { status: 'error', path: agentsPath, detail: errorMessage(error) }
+  const endAt = current.indexOf(AGENTS_MARKER_END, startAt)
+  if (endAt === -1) {
+    // 只有开头没有结尾：不猜，交给用户
+    return { status: 'error', path: agentsPath, detail: `${AGENTS_MARKER_START} 没有对应的 ${AGENTS_MARKER_END}` }
   }
-  return { status: 'appended', path: agentsPath }
+  const existing = current.slice(startAt, endAt + AGENTS_MARKER_END.length)
+  // 有就覆盖：内容一致才跳过，否则用 payload 替换标记之间（块外不动）。
+  if (existing.trim() === block) return { status: 'present', path: agentsPath }
+  return { status: 'update', path: agentsPath, current, startAt, endAt, block }
+}
+
+/** 执行 planRulesBlock 的结果。 */
+async function applyRulesBlock(plan) {
+  if (plan.status === 'append') {
+    const prefix = plan.currentExists && !plan.current.endsWith('\n') ? '\n\n' : plan.currentExists ? '\n' : ''
+    try {
+      await writeFile(plan.path, `${plan.current}${prefix}${plan.block}\n`, 'utf8')
+    } catch (error) {
+      return { status: 'error', path: plan.path, detail: errorMessage(error) }
+    }
+    return { status: 'appended', path: plan.path }
+  }
+  if (plan.status === 'update') {
+    const next = plan.current.slice(0, plan.startAt) + plan.block + plan.current.slice(plan.endAt + AGENTS_MARKER_END.length)
+    try {
+      await writeFile(plan.path, next, 'utf8')
+    } catch (error) {
+      return { status: 'error', path: plan.path, detail: errorMessage(error) }
+    }
+    return { status: 'updated', path: plan.path }
+  }
+  return plan
+}
+
+/**
+ * 覆盖前的备份：清空后写一份，只保留这一次（不散落 .kb-bak 文件）。
+ * 放在 $DSH_HOME/local-kb/backups/。
+ */
+async function backupBefore(dshHome, dest, agentsPath) {
+  const root = join(dshHome, 'local-kb', 'backups')
+  try {
+    await rm(root, { recursive: true, force: true })
+    await mkdir(root, { recursive: true })
+  } catch {
+    return undefined
+  }
+  try {
+    if (dest !== undefined) {
+      // 备份只留插件装的东西：系统垃圾与其他工具产物不进备份目录
+      const files = (await listTree(dest).catch(() => []))
+        .filter((file) => !/\.DS_Store$|__pycache__|.kb-bak-|\.pyc$/.test(file))
+      for (const file of files) {
+        const rel = relative(dest, file)
+        const target = join(root, 'skills', rel)
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, await readFile(file))
+      }
+    }
+    if (agentsPath !== undefined) {
+      try {
+        await writeFile(join(root, AGENTS_FILENAME), await readFile(agentsPath))
+      } catch {
+        // 还没有 AGENTS.md：没什么可备份
+      }
+    }
+    return root
+  } catch {
+    return undefined
+  }
+}
+
+/** 软链的真实路径（报告用，失败返回原路径）。 */
+function realpathOf(p) {
+  try {
+    return realpathSync(p)
+  } catch {
+    return p
+  }
+}
+
+/**
+ * Sync `references/agents-snippet.md` from the payload into `$DSH_HOME/AGENTS.md`.
+ *
+ * 有就覆盖：块存在且内容不同就替换标记之间，块外一行不动；内容相同则跳过。
+ * 直接调用时会自己备份一次；installSkill 会先统一备份，再跳过这里。
+ */
+export async function appendRulesToAgents(dshHome, payloadDir, opts = {}) {
+  const agentsPath = resolve(join(dshHome, AGENTS_FILENAME))
+  const plan = await planRulesBlock(agentsPath, payloadDir)
+  if (plan.status !== 'update' && plan.status !== 'append') return plan
+  if (opts.skipBackup !== true) await backupBefore(dshHome, undefined, agentsPath)
+  return applyRulesBlock(plan)
 }
 
 /** Copy every file+dir inside `src` into `dst`, creating parent dirs as needed. */

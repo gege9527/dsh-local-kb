@@ -315,32 +315,37 @@ export function judgeKbDelete(kbRoot, tool, args) {
   if (tool !== 'bash' || typeof args?.command !== 'string') return undefined
   const cmd = args.command
   if (cmd === '' || cmd.length > 8192) return undefined
-  const hasDelete = BASH_DELETE_PATTERN.test(cmd)
-  const hasMove = /\bmv\b/.test(cmd)
-  if (!hasDelete && !hasMove) return undefined
+  if (!BASH_DELETE_PATTERN.test(cmd) && !/\bmv\b/.test(cmd)) return undefined
 
   const inKb = (p) => {
     const { kind } = classifyPath(kbRoot, p)
     return kind !== 'outside' && kind !== 'unknown'
   }
-  const tokens = commandPathTokens(cmd).map((t) => expandHome(t))
-  const hit = tokens.filter(inKb)
   const workdir = typeof args?.workdir === 'string' ? args.workdir.trim() : ''
   const workdirHit = workdir !== '' && inKb(expandHome(workdir))
 
-  if (hasDelete) {
-    if (hit.length > 0) return deleteRefusal(classifyPath(kbRoot, hit[0]).rel ?? hit[0])
-    if (workdirHit) return deleteRefusal(classifyPath(kbRoot, expandHome(workdir)).rel ?? workdir)
-    // 变量拼出来的路径判不出：命令里出现 KB 文本就按命中处理（保持旧行为的兜底）
-    if (cmd.includes(kbRoot)) return deleteRefusal(kbRoot)
-    return undefined
-  }
+  // 复合命令按 && || ; 换行 分段，逐段判：只有「这一段在删 KB」才拦。
+  // 否则 `find /x -delete && python3 kb-check.py <KB>` 会被整条误杀。
+  for (const segment of cmd.split(/&&|\|\||;|\n/).map((s) => s.trim()).filter(Boolean)) {
+    const segDelete = BASH_DELETE_PATTERN.test(segment)
+    const tokens = commandPathTokens(segment).map((t) => expandHome(t))
+    const hit = tokens.filter(inKb)
 
-  // 纯 mv：源在 KB、目标不在 KB = 移出知识库
-  if (tokens.length < 2) return undefined
-  const src = tokens[0]
-  const dst = tokens[tokens.length - 1]
-  if (inKb(src) && !inKb(dst)) return deleteRefusal(classifyPath(kbRoot, src).rel ?? src)
+    if (segDelete) {
+      if (hit.length > 0) return deleteRefusal(classifyPath(kbRoot, hit[0]).rel ?? hit[0])
+      if (workdirHit) return deleteRefusal(classifyPath(kbRoot, expandHome(workdir)).rel ?? workdir)
+      // 一个路径都没解析出来时，才退回文本包含（变量路径兜底）
+      if (tokens.length === 0 && segment.includes(kbRoot)) return deleteRefusal(kbRoot)
+      continue
+    }
+
+    // 纯 mv：源在 KB、目标不在 KB = 移出知识库；KB 内部移动（进 archive/）放行
+    if (/\bmv\b/.test(segment) && tokens.length >= 2) {
+      const from = tokens[0]
+      const to = tokens[tokens.length - 1]
+      if (inKb(from) && !inKb(to)) return deleteRefusal(classifyPath(kbRoot, from).rel ?? from)
+    }
+  }
   return undefined
 }
 

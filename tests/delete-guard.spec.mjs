@@ -34,6 +34,10 @@ check('workdir 在 KB + ls 放行', judge('ls', KB), false)
 // 变量形式（判不出具体路径时的兜底）
 check('rm 变量 KB 路径被拒', judge('rm $KB/memory/x.md'.replace('$KB', KB)), true)
 
+// 复合命令：别处删除 + 顺手读 KB，不该被当成删 KB
+check('复合命令不误伤', judge('find ~/.dsh/local-kb/backups -name "*.tmp" -delete && python3 check.py ' + KB), false)
+check('复合命令里真的删 KB 仍被拒', judge('find ~/.dsh -delete && rm ' + KB + '/memory/x.md'), true)
+
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
 if (failed > 0) process.exitCode = 1
