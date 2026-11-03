@@ -7,6 +7,7 @@ import { downloadRoot, syncRoot } from '../index.js'
 // ---- 远端镜像：本地什么样远端什么样；垃圾文件排除；多余项删除 ----
 
 const remote = new Map() // rel -> content（内存里的「远端」）
+let propfindCount = 0 // 验证「无变化时不扫远端」
 
 const xml = (p, dir) => '<D:response><D:href>' + p + '</D:href><D:propstat><D:prop><D:resourcetype>' +
   (dir ? '<D:collection/>' : '') + '</D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>'
@@ -34,6 +35,7 @@ const server = http.createServer((req, res) => {
     return
   }
   if (req.method === 'PROPFIND') {
+    propfindCount++
     const prefix = rel === '' ? '' : rel + '/'
     const items = new Set()
     for (const key of remote.keys()) {
@@ -91,9 +93,12 @@ check('远端最终与本地一致', [...remote.keys()].sort().join(',') === 'RE
 check('内容被覆盖为本地版本', remote.get('README.md') === 'readme')
 
 const previousMap = first.fileMap
+const scansBefore = propfindCount
 const second = await syncRoot({ kbRoot: kb, url, user: 'u', password: 'p', previousMap })
 check('无变化时不重复推送', second.pushed.length === 0, JSON.stringify(second.pushed))
 check('无变化时无删除', second.deleted.length === 0, JSON.stringify(second.deleted))
+check('无变化时跳过远端扫描', propfindCount === scansBefore, '多了 ' + (propfindCount - scansBefore) + ' 次 PROPFIND')
+check('跳过时标记 skipped', second.skipped === true, JSON.stringify(second.skipped))
 
 // 本地删一个文件 → 远端跟着删
 fs.rmSync(path.join(kb, 'docs', 'a.md'))

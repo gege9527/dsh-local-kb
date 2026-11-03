@@ -708,6 +708,17 @@ export async function syncRoot({ kbRoot, url, user, password, previousMap, remot
     pending.push({ abs, rel, key })
   }
 
+  // 本地既没有改动也没有删除时，远端不可能有需要清理的东西（单写者），
+  // 直接跳过远端全树扫描 —— 每次写入后的自动同步省掉约 3 秒。
+  const localPaths = new Set(files)
+  const removedLocally = [...previous.keys()].filter((rel) => !localPaths.has(rel))
+  if (pending.length === 0 && removedLocally.length === 0) {
+    return {
+      pushed: [], deleted: [], failedDeletes: [],
+      total: files.length, fileMap: Object.fromEntries(now), skipped: true,
+    }
+  }
+
   // 阶段二：限流并发上传（4 路）。目录 in-flight 合并 + MKCOL 幂等保证并发安全。
   await mapLimit(pending, 4, async ({ abs, rel, key }) => {
     const data = await readFile(abs)
@@ -1188,7 +1199,14 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         deletedFiles: result.deleted.length,
         failedDeletes: result.failedDeletes.length,
       })
-      return { ok: true, pushed: result.pushed, total: result.total, state: syncState.snapshot() }
+      return {
+        ok: true,
+        pushed: result.pushed.length,
+        deleted: result.deleted.length,
+        failedDeletes: result.failedDeletes.length,
+        total: result.total,
+        state: syncState.snapshot(),
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await syncState.record({

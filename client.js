@@ -267,6 +267,7 @@ window.__ModuleLoader__.load({
       }
       var [syncState, setSyncState] = useState({})
       var [overview, setOverview] = useState(null)
+      var [showAllProjects, setShowAllProjects] = useState(false)
       var [provider, setProvider] = useState('custom')
       var [remoteDir, setRemoteDir] = useState('local-kb-sync')
       var [autoSync, setAutoSync] = useState(true)
@@ -376,8 +377,9 @@ window.__ModuleLoader__.load({
         postJson(API_SYNC, {}).then(function (r) {
           if (r && r.ok) {
             var extra = []
-            if (r.pushed) extra.push(T.pushed.replace('{n}', r.pushed))
-            if (r.deleted && r.deleted.length) extra.push((isZh() ? '远端删除 ' + r.deleted.length + ' 个' : r.deleted.length + ' deleted'))
+            if (r.pushed > 0) extra.push(T.pushed.replace('{n}', r.pushed))
+            if (r.deleted > 0) extra.push((isZh() ? '远端删除 ' + r.deleted + ' 个' : r.deleted + ' deleted'))
+            if (r.failedDeletes > 0) extra.push((isZh() ? r.failedDeletes + ' 个删除失败' : r.failedDeletes + ' delete failures'))
             showNotice('ok', T.syncOk + (extra.length ? '（' + extra.join('，') + '）' : ''))
           } else {
             showNotice('error', (r && (r.reason || r.lastError)) || T.syncOk)
@@ -540,6 +542,38 @@ window.__ModuleLoader__.load({
         checkLine || h('span', null, T.checkNever),
         warnEls.length > 0 ? warnEls : null)
 
+
+      // 知识库内容（只读）：项目、记忆条数、索引行数、文档数
+      var overviewCard = null
+      if (overview) {
+        var shownProjects = overview.projects.slice(0, showAllProjects ? overview.projects.length : 12)
+        var projectLines = shownProjects.map(function (p) {
+          var mark = p.path === null ? T.overviewNoPath : p.pathExists === false ? T.overviewMissing : ''
+          return h('span', { key: p.id, className: p.pathExists === false ? 'dsh-lkb-status-warn' : '' },
+            p.id + ' · ' + (isZh() ? '记忆 ' : 'notes ') + p.memories +
+            ' · ' + (isZh() ? '索引 ' : 'index ') + p.indexLines + (isZh() ? ' 行' : ' lines') +
+            (mark ? ' · ' + mark : ''))
+        })
+        overviewCard = h('div', { className: 'dsh-lkb-card' },
+          h('div', { className: 'dsh-lkb-label' }, T.overviewTitle),
+          h('p', { className: 'dsh-lkb-desc' },
+            T.overviewSummary
+              .replace('{projects}', String(overview.projects.length))
+              .replace('{docs}', String(overview.docs))),
+          overview.projects.length === 0
+            ? h('p', { className: 'dsh-lkb-desc' }, T.overviewNone)
+            : h('div', { className: 'dsh-lkb-status' }, projectLines),
+          overview.projects.length > 12
+            ? h('button', {
+              type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-ghost',
+              onClick: function () { setShowAllProjects(!showAllProjects) }
+            }, showAllProjects
+              ? (isZh() ? '收起' : 'Show less')
+              : (isZh() ? '显示全部 ' + overview.projects.length + ' 个' : 'Show all ' + overview.projects.length))
+            : null
+        )
+      }
+
       var noticeEl = notice ? h('div', { className: 'dsh-lkb-toast dsh-lkb-toast-' + (notice.kind === 'error' ? 'error' : 'ok'), role: 'status' },
         notice.text) : null
 
@@ -549,23 +583,7 @@ window.__ModuleLoader__.load({
           h('p', { className: 'dsh-lkb-desc' }, T.sectionDesc),
 
           // 知识库内容（只读）：项目、记忆条数、索引行数、文档数
-          overview ? h('div', { className: 'dsh-lkb-card' },
-            h('div', { className: 'dsh-lkb-label' }, T.overviewTitle),
-            h('p', { className: 'dsh-lkb-desc' },
-              T.overviewSummary
-                .replace('{projects}', String(overview.projects.length))
-                .replace('{docs}', String(overview.docs))),
-            overview.projects.length === 0
-              ? h('p', { className: 'dsh-lkb-desc' }, T.overviewNone)
-              : h('div', { className: 'dsh-lkb-status' },
-                overview.projects.slice(0, 12).map(function (p) {
-                  var mark = p.path === null ? T.overviewNoPath : p.pathExists === false ? T.overviewMissing : ''
-                  return h('span', { key: p.id, className: p.pathExists === false ? 'dsh-lkb-status-warn' : '' },
-                    p.id + ' · ' + (isZh() ? '记忆 ' : 'notes ') + p.memories +
-                    ' · ' + (isZh() ? '索引 ' : 'index ') + p.indexLines + (isZh() ? ' 行' : ' lines') +
-                    (mark ? ' · ' + mark : ''))
-                }))
-          ) : null,
+          overviewCard,
 
           // 插件说明（关于本插件：卸载行为与手动清理指引）
           h('div', { className: 'dsh-lkb-card' },
