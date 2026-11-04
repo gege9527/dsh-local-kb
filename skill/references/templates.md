@@ -153,6 +153,7 @@ name: <kebab-case-slug>
 description: <一句话钩子——召回时靠它判断是否打开>
 type: user | feedback | project | reference
 status: active | completed | archived   # 仅 project 可带；active = 当前活跃任务（每目录最多一条）
+                                        # 触发条件见 references/memory.md「active 写入时机」
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
@@ -164,11 +165,15 @@ Why: <为什么>
 How to apply: <下次怎么用>
 ```
 
-记忆索引（`MEMORY.md`）只放指针行：
+记忆索引（`MEMORY.md`）只放指针行；活跃任务的指针行加 `⚡`：
 
 ```md
 ## user
 - [一句话名片](slug.md) — description 钩子
+
+## project
+- [⚡ 恢复迁移：修 serializer 测试](repair-serializer.md) — active；阻塞：prod 表锁
+- [登录改版已完成](login-revamp.md) — completed
 ```
 
 ## 骨架文件模板（首次运行 / 换设备新装时创建）

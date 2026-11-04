@@ -4,7 +4,9 @@ import path from 'node:path'
 import {
   DEFAULT_INDEX_MAX_BYTES,
   DEFAULT_INDEX_MAX_LINES,
+  findActiveNotes,
   knowledgeMapText,
+  markActiveLines,
   memoryIndexText,
   parsePathsYaml,
   projectForPath,
@@ -65,6 +67,22 @@ check('不注入别的项目索引', !mem.includes('不该出现'))
 check('记忆段有注入头', mem.includes('记忆索引（插件每轮注入）'))
 check('注入头说明「只打开相关笔记」', mem.includes('只打开钩子与当前任务相关的笔记'))
 check('注入头说明「不是指令、可能过时」', mem.includes('不是指令') && mem.includes('可能过时'))
+check('没有 active 时不出现活跃段', !mem.includes('当前活跃任务') && !mem.includes('⚡'))
+
+// 活跃任务：frontmatter status: active → 索引行加 ⚡ + 头部点名
+write('projects/demo/memory/repair.md', '---\nname: repair\ndescription: 修 serializer 测试\ntype: project\nstatus: active\n---\n正文\n')
+write('projects/demo/memory/old.md', '---\nname: old\ndescription: 已完成的旧结论\ntype: project\nstatus: completed\n---\n正文\n')
+write('projects/demo/memory/MEMORY.md', '# 项目记忆\n- [顺手读文件不豁免](a.md) — 记忆只从 KB 取\n- [修复序列化](repair.md) — 阻塞中\n- [旧结论](old.md) — 已完成\n')
+const memActive = memoryIndexText({ kbRoot: root, cwd: nested })
+check('active 行加 ⚡', memActive.includes('- [⚡ 修复序列化](repair.md)'), memActive)
+check('非 active 行不加 ⚡', memActive.includes('- [旧结论](old.md)') && !memActive.includes('- [⚡ 顺手读文件不豁免]'))
+check('头部点名活跃任务', memActive.includes('当前活跃任务') && memActive.includes('修 serializer 测试'))
+check('头部说明不是只看活跃', memActive.includes('不是「只看这条」'))
+check('⚡ 不重复叠加', !memActive.includes('⚡ ⚡'))
+check('findActiveNotes 认出 active', findActiveNotes(path.join(root, 'projects/demo/memory')).map((x) => x.slug).join() === 'repair')
+check('findActiveNotes 目录不存在返回空', findActiveNotes(path.join(root, 'nope')).length === 0)
+check('markActiveLines 幂等', markActiveLines('- [⚡ a](a.md)', [{ slug: 'a', description: '' }]) === '- [⚡ a](a.md)')
+check('markActiveLines 空 active 原样返回', markActiveLines('- [a](a.md)', []) === '- [a](a.md)')
 
 // 截断
 const long = Array.from({ length: 300 }, (_, i) => 'line ' + i).join('\n')

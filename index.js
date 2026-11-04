@@ -1751,8 +1751,13 @@ async function skillInstalled(dshHome) {
  * ======================================================================= */
 export const REMINDER_PRESSURE = 0.6
 export const COMPACTION_REMINDER_TEXT =
-  '对话已经很长（约 60% 上下文窗口）。趁还没被压缩，把这次任务里值得长期保留的结论写进知识库：' +
-  '一条事实一个文件，指针进对应的 MEMORY.md。只写长期有用的，过程细节不要写。'
+  '上下文已用到约 60% 窗口。如果这个任务还没做完，先把恢复点写下来再继续：\n' +
+  '1. 写或更新一条 \`status: active\` 的 \`project\` 记忆：目标 / 当前状态 / 阻塞 / 下一步（相对时间转绝对日期）。\n' +
+  '   已有 active 就地更新，不要新建第二条。\n' +
+  '2. 在所属 MEMORY.md 的指针行前加 \`⚡\`。\n' +
+  '3. 跑 \`python3 <技能目录>/tools/kb-check.py\`。\n' +
+  '任务已经做完、或本来就只是一问一答：跳过，不用写。\n' +
+  '⚡ 只是恢复锚点，不是「只看这一条」：其余记忆照常按钩子取舍。'
 
 /**
  * 返回一个 context.text 函数：同一 session 只提醒一次（WeakSet 随 session 回收）。

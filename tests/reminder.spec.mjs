@@ -25,6 +25,15 @@ check('61% 提醒', remind(ctx(session)) === COMPACTION_REMINDER_TEXT)
 check('同一会话只说一次', remind(ctx(session)) === '')
 check('不同会话各自提醒', remind(ctx({ id: 's2' })) === COMPACTION_REMINDER_TEXT)
 
+// 文案是「有条件地请写」，不是无条件强制（避免为满足要求而制造噪音记忆）
+check('文案以未完成条件开头', COMPACTION_REMINDER_TEXT.includes('如果这个任务还没做完'))
+check('文案给出跳过条件', COMPACTION_REMINDER_TEXT.includes('跳过'))
+check('文案没有强制措辞', !COMPACTION_REMINDER_TEXT.includes('必须执行'))
+check('文案给出 active 步骤', COMPACTION_REMINDER_TEXT.includes('status: active'))
+check('文案要求 ⚡ 标记', COMPACTION_REMINDER_TEXT.includes('⚡'))
+check('文案要求跑 kb-check', COMPACTION_REMINDER_TEXT.includes('kb-check.py'))
+check('文案说明不是只看活跃', COMPACTION_REMINDER_TEXT.includes('不是「只看这一条」'))
+
 // 信号缺失：一律不出声
 check('没有 tokenMeter', createCompactionReminder({})(ctx(session)) === '')
 check('没有窗口', createCompactionReminder({ tokenMeter: { measure: () => ({ totalTokens: 999 }) } })(ctx(session)) === '')

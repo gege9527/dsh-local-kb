@@ -100,8 +100,11 @@ AI 运行时按需直接调用，技能不检查是否存在。**工具 = 加速
 
 记忆不设命令。自然语言触发（"记住 XXX"、"我之前说过…吗"、"别忘了"、"继续/上次/接着做"）→ **必须先读
 `references/memory.md` 全文**，按协议执行召回/写入：frontmatter 五字段（name/description/type/created/updated，
-type 限 user/feedback/project/reference，project 可带 status: active|completed|archived）+ 补 MEMORY.md 指针；
-会话接续靠 `status: active` 记忆（每目录最多一条，写前走接管协议）；写完过一遍「写入自检」清单。
+type 限 user/feedback/project/reference，project 按触发条件带 status: active|completed|archived）+ 补 MEMORY.md 指针；
+会话接续靠 `status: active` 记忆（每目录最多一条，写前走接管协议，索引行加 `⚡`）；写完过一遍「写入自检」清单。
+
+**active 不是可选项**：任务跨会话 / 改了 ≥3 个文件 / 上下文到 60% → 立刻建或更新 active，
+条件与写法见 memory.md「active 写入时机」。不建 active 的长任务 = 超限后无法接续。
 
 ### 用户说「把这个项目加进知识库」
 
@@ -114,6 +117,18 @@ type 限 user/feedback/project/reference，project 可带 status: active|complet
 5. 报告：已建档 + 是否已索引。
 
 用户没这么说、只是在一个未入库目录里干活时：**不自动建档**，按普通检索处理。
+
+## 上下文将满（≥60%）先落盘
+
+上下文用到约 60% 时，插件会**提示落盘并给出具体步骤**，但只在任务未完成时才写——做完的会话直接跳过，
+不要为了满足提示而制造记忆。收到它、或自己判断"这轮可能聊不完"时，按顺序：
+
+1. 有 active → 就地更新（目标 / 当前状态 / 阻塞 / 下一步），不新建第二条；
+2. 无 active → 新建一条 `type: project` + `status: active`，索引行加 `⚡`，走接管协议；
+3. 跑 `python3 <技能目录>/tools/kb-check.py`；
+4. **再继续任务**。
+
+**落盘优先于继续**：被压缩或超限后丢的是对话，不是笔记。反过来说，落盘晚了就等于没落。
 
 ## 铁律
 
