@@ -52,9 +52,11 @@ description: >-
       arch/<project_id>-arch.md  # 架构摘要
       docs/                    # 项目产出文档（分析/方案/报告）
       memory/                  # 项目级记忆（project / 本项目 reference）
-  archive/                     # 归档（不删除）：离线的项目与文档都放这里
+  archive/                     # 归档（不删除）：离线的项目、文档、记忆都放这里
     projects/<project_id>/     # 归档的项目（整体移入）
     docs/<文档集>/              # 归档的文档集
+    memory/<slug>.md           # 归档的记忆笔记
+    projects/<project_id>/memory/<slug>.md  # 归档的项目记忆
 ```
 
 所有目录名与文件名一律用英文/拼音/ASCII。

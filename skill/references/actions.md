@@ -45,6 +45,7 @@
    paths.yaml 条目**保留**（源项目未动，映射仍有效）；项目页 frontmatter 加 `status: archived`
 2. **文档**：`docs/<文档集>/` 整体移入 `archive/docs/<文档集>/`；
    正文头部加一行 `> 已归档 YYYY-MM-DD`
-3. **记忆**：`memory/<slug>.md` → `memory/archive/<slug>.md`；从 `MEMORY.md` 移除指针行
+3. **记忆**：`memory/<slug>.md` → `archive/memory/<slug>.md`；项目记忆 →
+   `archive/projects/<id>/memory/<slug>.md`；从 `MEMORY.md` 移除指针行（**不要留归档指针**，它在目录外）
 4. 校验：原位置无该文件；`archive/` 下存在；索引已更新
 5. 报告时明确："已归档（未删除），如需物理删除请手动执行 `rm`"

@@ -41,6 +41,9 @@
 - **归档统一到根层**：技能结构图、模板骨架、`remove` 流程都改成 `archive/projects/<id>` 与
   `archive/docs/<文档集>`（原来是 `projects/archive/` + `docs/archive/`，两种规则）。
   放根层的理由：知识地图只扫 `projects/*`，根层归档天然不被当成项目；同步遍历整个 KB_ROOT，照样备份。
+- **记忆归档也统一到根层**：`memory/archive/` 与 `projects/<id>/memory/archive/` 全部移到
+  `archive/memory/`、`archive/projects/<id>/memory/`。`MEMORY.md` 不再留归档指针
+  （指针只能指向本目录，归档在根层，留了就是断指针）。
 - **生成物不参与同步**：`SYNC_EXCLUDE` 增加 `^\.kb-index/`（卡片 + FTS，约 2.4M）。
   `kb-search` 发现缺卡或过期时**自动重建**卡片与索引（`--no-auto` 可退回只提示），
   所以换设备后第一次检索就会补齐，不需要手动跑。
