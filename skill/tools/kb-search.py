@@ -33,6 +33,53 @@ def frontmatter(text):
     return meta, text[end + 4:]
 
 
+CARD_SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
+
+
+def iter_docs(kb_root):
+    """与 kb-card.py 同一套枚举规则：doc 卡片对应 docs/ 与 projects/<id>/docs/。"""
+    for base in ("docs", "projects"):
+        root = os.path.join(kb_root, base)
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in CARD_SKIP_DIRS]
+            for name in filenames:
+                if not name.endswith(".md") or name in ("MEMORY.md", "_topic.md"):
+                    continue
+                full = os.path.join(dirpath, name)
+                rel = os.path.relpath(full, kb_root)
+                if base == "projects":
+                    parts = rel.split("/")
+                    if len(parts) == 3 and parts[2] == parts[1] + ".md":
+                        continue
+                    if "/memory/" in rel:
+                        continue
+                yield rel, full
+
+
+def slug_of(rel):
+    import re as _re
+    stem = rel[:-3] if rel.endswith(".md") else rel
+    return _re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]+", "-", stem).strip("-")
+
+
+def detect_stale(kb_root, cards_dir):
+    """卡片缺失或比源文档旧 → 返回计数。查询前自检，避免拿旧摘要作答。"""
+    missing = 0
+    stale = 0
+    for rel, full in iter_docs(kb_root):
+        card = os.path.join(cards_dir, slug_of(rel) + ".md")
+        try:
+            if not os.path.exists(card):
+                missing += 1
+            elif os.path.getmtime(card) < os.path.getmtime(full):
+                stale += 1
+        except OSError:
+            continue
+    return missing, stale
+
+
 def rebuild(db, cards_dir):
     con = sqlite3.connect(db)
     con.execute("DROP TABLE IF EXISTS cards")
@@ -96,6 +143,19 @@ def main(argv):
     if "--rebuild" in argv or not os.path.exists(db):
         n = rebuild(db, cards_dir)
         print("# 索引重建：%d 张卡片" % n, file=sys.stderr)
+
+    missing, stale = detect_stale(kb_root, cards_dir)
+    if missing or stale:
+        parts = []
+        if missing:
+            parts.append("缺卡 %d 篇" % missing)
+        if stale:
+            parts.append("过期 %d 篇" % stale)
+        print(
+            "# 卡片索引需更新（%s）：python3 %s <KB_ROOT>"
+            % ("，".join(parts), os.path.join(os.path.dirname(__file__), "kb-card.py")),
+            file=sys.stderr,
+        )
 
     rows = query_rows(db, term, limit)
     if not rows:

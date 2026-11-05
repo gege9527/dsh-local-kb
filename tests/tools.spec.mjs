@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 // ---- kb-card / kb-search：卡片生成与两段式检索 ----
@@ -75,6 +75,17 @@ check('未命中提示', miss.includes('未命中'), miss)
 // 6. --check 模式报告缺卡
 const checkOut = execFileSync(py, [path.join(toolsDir, 'kb-card.py'), kb, '--check'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).toString()
 check('--check 报告缺卡', checkOut.includes('缺卡 0'), checkOut)
+
+// 7. 卡片自检：新增文档 / 文档改动后提示重建
+write('docs/DSH/new-doc.md', '---\ntitle: 新文档\n---\n\n新内容插件加载\n')
+const staleNew = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
+check('缺卡时提示重建', staleNew.stderr.includes('缺卡 1'), staleNew.stderr)
+
+const target = path.join(kb, 'docs/DSH/plugin.md')
+const future = new Date(Date.now() + 60_000)
+fs.utimesSync(target, future, future)
+const staleOld = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
+check('文档更新后提示过期', staleOld.stderr.includes('过期'), staleOld.stderr)
 
 const failed = results.filter((ok) => !ok).length
 console.log('\n---- ' + (results.length - failed) + ' passed, ' + failed + ' failed ----')
