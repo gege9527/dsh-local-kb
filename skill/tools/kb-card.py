@@ -113,12 +113,15 @@ def build_card(kb_root, rel, full):
 def main(argv):
     kb_root = os.path.expanduser(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "~/.local-kb")
     check_only = "--check" in argv
+    prune = "--prune" in argv
     out_dir = os.path.join(kb_root, CARD_DIR)
     count = 0
     stale = 0
     written = 0
+    expected = set()
     for rel, full in iter_docs(kb_root):
         count += 1
+        expected.add(slug_of(rel) + ".md")
         card = build_card(kb_root, rel, full)
         if check_only:
             path = os.path.join(out_dir, slug_of(rel) + ".md")
@@ -133,7 +136,16 @@ def main(argv):
     if check_only:
         print("文档 %d，缺卡 %d" % (count, stale))
         sys.exit(1 if stale else 0)
-    print("文档 %d，写卡 %d → %s" % (count, written, out_dir))
+    removed = 0
+    if prune and os.path.isdir(out_dir):
+        for name in os.listdir(out_dir):
+            if name.endswith(".md") and name not in expected:
+                try:
+                    os.remove(os.path.join(out_dir, name))
+                    removed += 1
+                except OSError:
+                    pass
+    print("文档 %d，写卡 %d，清孤儿 %d → %s" % (count, written, removed, out_dir))
 
 
 if __name__ == "__main__":

@@ -811,6 +811,8 @@ const SYNC_EXCLUDE = [
   /\.tmp$/i,
   /(^|\/)Thumbs\.db$/i,
   /(^|\/)\.kb-sync-state\.json$/,
+  // 文档卡片与 FTS 索引是生成物：kb-search 发现缺卡会自动重建，不必占同步带宽。
+  /^\.kb-index\//,
 ]
 const isSyncExcluded = (rel) => SYNC_EXCLUDE.some((re) => re.test(rel))
 

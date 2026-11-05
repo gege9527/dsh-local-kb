@@ -76,16 +76,20 @@ check('未命中提示', miss.includes('未命中'), miss)
 const checkOut = execFileSync(py, [path.join(toolsDir, 'kb-card.py'), kb, '--check'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).toString()
 check('--check 报告缺卡', checkOut.includes('缺卡 0'), checkOut)
 
-// 7. 卡片自检：新增文档 / 文档改动后提示重建
+// 7. 卡片自检：缺卡时自动补齐；--no-auto 只提示
 write('docs/DSH/new-doc.md', '---\ntitle: 新文档\n---\n\n新内容插件加载\n')
-const staleNew = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
-check('缺卡时提示重建', staleNew.stderr.includes('缺卡 1'), staleNew.stderr)
+const noAuto = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb, '--no-auto'], { encoding: 'utf8' })
+check('--no-auto 只提示不写', noAuto.stderr.includes('缺卡 1') && !noAuto.stderr.includes('已自动更新'), noAuto.stderr)
+
+const autoNew = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
+check('默认自动更新卡片', autoNew.stderr.includes('已自动更新'), autoNew.stderr)
+check('自动更新后能搜到新文档', autoNew.stdout.includes('new-doc.md'), autoNew.stdout)
 
 const target = path.join(kb, 'docs/DSH/plugin.md')
 const future = new Date(Date.now() + 60_000)
 fs.utimesSync(target, future, future)
 const staleOld = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
-check('文档更新后提示过期', staleOld.stderr.includes('过期'), staleOld.stderr)
+check('文档更新后自动刷新', staleOld.stderr.includes('过期') || staleOld.stderr.includes('已自动更新'), staleOld.stderr)
 
 // 8. 记忆层：文档没命中也要能搜到记忆正文
 write('memory/global-note.md', '---\nname: global-note\ndescription: 全局记忆示例\ntype: reference\n---\n\n提到独有的记忆词条 zebra\n')

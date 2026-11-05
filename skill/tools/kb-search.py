@@ -11,6 +11,7 @@
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 
 CARD_DIR = ".kb-index/cards"
@@ -198,11 +199,21 @@ def main(argv):
             parts.append("缺卡 %d 篇" % missing)
         if stale:
             parts.append("过期 %d 篇" % stale)
-        print(
-            "# 卡片索引需更新（%s）：python3 %s <KB_ROOT>"
-            % ("，".join(parts), os.path.join(os.path.dirname(__file__), "kb-card.py")),
-            file=sys.stderr,
-        )
+        if "--no-auto" in argv:
+            print(
+                "# 卡片索引需更新（%s）：python3 %s <KB_ROOT>"
+                % ("，".join(parts), os.path.join(os.path.dirname(__file__), "kb-card.py")),
+                file=sys.stderr,
+            )
+        else:
+            # 自动补齐：卡片是纯生成物（排除同步），换设备后第一次检索就会建好
+            subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(__file__), "kb-card.py"), kb_root],
+                capture_output=True,
+                check=False,
+            )
+            rebuild(db, cards_dir)
+            print("# 卡片已自动更新（%s）" % "，".join(parts), file=sys.stderr)
 
     rows = query_rows(db, term, limit)
     memories = memory_hits(kb_root, term)
