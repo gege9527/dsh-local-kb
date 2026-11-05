@@ -126,6 +126,43 @@ def snippets(path, term, kb_root):
     return hits
 
 
+MEMORY_SKIP = {"MEMORY.md", "_topic.md"}
+
+
+def memory_roots(kb_root):
+    roots = [os.path.join(kb_root, "memory")]
+    projects = os.path.join(kb_root, "projects")
+    if os.path.isdir(projects):
+        for name in sorted(os.listdir(projects)):
+            mem = os.path.join(projects, name, "memory")
+            if os.path.isdir(mem):
+                roots.append(mem)
+    return roots
+
+
+def memory_hits(kb_root, term, limit=5):
+    """记忆层：直接 grep 正文，不建索引——193 条 / 1.2M，实测 0.01s。"""
+    hits = []
+    for root in memory_roots(kb_root):
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d != "archive"]
+            for name in filenames:
+                if not name.endswith(".md") or name in MEMORY_SKIP:
+                    continue
+                full = os.path.join(dirpath, name)
+                try:
+                    text = open(full, encoding="utf-8").read()
+                except OSError:
+                    continue
+                if term not in text:
+                    continue
+                desc = re.search(r"^description:\s*(.+)$", text[:1024], re.M)
+                hits.append((os.path.relpath(full, kb_root), desc.group(1).strip() if desc else ""))
+                if len(hits) >= limit:
+                    return hits
+    return hits
+
+
 def main(argv):
     if len(argv) < 2:
         print("用法: kb-search.py \"<关键词>\" [KB_ROOT] [--limit N] [--rebuild]", file=sys.stderr)
@@ -158,10 +195,12 @@ def main(argv):
         )
 
     rows = query_rows(db, term, limit)
-    if not rows:
+    memories = memory_hits(kb_root, term)
+    if not rows and not memories:
         print('未命中：%s' % term)
         return 0
-    print("命中 %d 篇（关键词：%s）" % (len(rows), term))
+    if rows:
+        print("命中 %d 篇（关键词：%s）" % (len(rows), term))
     for idx, (doc, title, body) in enumerate(rows, 1):
         print("")
         print("%d. %s" % (idx, doc))
@@ -177,6 +216,11 @@ def main(argv):
             print("   摘要：%s" % summary)
         for line, text in snippets(os.path.join(kb_root, doc), term, kb_root):
             print("   L%d: %s" % (line, text))
+    if memories:
+        print("")
+        print("相关记忆 %d 条" % len(memories))
+        for rel, desc in memories:
+            print("- %s%s" % (rel, (" — " + desc) if desc else ""))
     return 0
 
 

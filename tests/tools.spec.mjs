@@ -87,6 +87,12 @@ fs.utimesSync(target, future, future)
 const staleOld = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
 check('文档更新后提示过期', staleOld.stderr.includes('过期'), staleOld.stderr)
 
+// 8. 记忆层：文档没命中也要能搜到记忆正文
+write('memory/global-note.md', '---\nname: global-note\ndescription: 全局记忆示例\ntype: reference\n---\n\n提到独有的记忆词条 zebra\n')
+const memOnly = search(['zebra', kb])
+check('记忆层命中', memOnly.includes('相关记忆 1 条') && memOnly.includes('memory/global-note.md'), memOnly)
+check('记忆层带描述', memOnly.includes('全局记忆示例'), memOnly)
+
 const failed = results.filter((ok) => !ok).length
 console.log('\n---- ' + (results.length - failed) + ' passed, ' + failed + ' failed ----')
 fs.rmSync(kb, { recursive: true, force: true })
