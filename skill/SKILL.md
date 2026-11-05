@@ -15,7 +15,7 @@ description: >-
 零服务依赖。**同一套策展纪律管两者。记忆路径永远带 `<KB_ROOT>/` 前缀。**
 
 **本技能只做一件事：告诉 AI 用什么工具、按什么流程查询和保存。**
-不安装、不校验、不替代任何工具。codegraph / graphify / grep 由 AI 直接调用。
+不安装、不校验、不替代任何工具。检索全部走文件系统：grep / read / find / git。
 
 **工具是加速器，不是前置依赖。** 缺失不阻塞流程：探测 → 提示用户自行安装 → 继续 → 按 AI 现有能力降级。
 工具在 → 保存/查询更精细快；工具缺 → 仍保存 AI 能确证的内容，绝不硬编未验证数据。
@@ -25,6 +25,12 @@ description: >-
 - 所有读写走文件系统，只用本技能的 KB_ROOT。
 - 不修改任何其他技能、宿主配置文件或既有笔记库。
 - 与其他触发词重叠的技能并存时，互不干扰。
+
+## 能力边界
+
+本技能提供**文件级定位**：某功能在哪个文件、哪个目录、哪段文档。
+不提供**调用关系与影响面分析**——那需要语言级解析，超出文件检索范围。
+判断改动影响时：同文件 grep 调用 + 跑项目测试，以测试结果为准。
 
 ## KB_ROOT — 知识库根
 
@@ -63,26 +69,19 @@ description: >-
 
 代码模式 → 加载 `references/code-project.md`；文档模式 → `references/doc-archive.md`。
 
-## 工具指引
+## 检索方式
 
-AI 运行时按需直接调用，技能不检查是否存在。**工具 = 加速器，不是前置依赖。**
+全部走文件系统，零工具依赖：
 
-| 用途 | 有工具 | 无工具（AI 直接处理） |
-|---|---|---|
-| 代码符号定位（"X 功能在哪 / 怎么实现"） | **先 grep KB**；再用 `codegraph sync/query/explore/callers/impact -p <本机路径>` | 先 grep KB，再 ripgrep 源码 + 直接读文件 |
-| 架构 / 项目图谱素材 | `graphify update <path>` → 读 `graphify-out/GRAPH_REPORT.md` | 跳过架构页（本就可选） |
-| 知识库内部检索（中文别名、文档、记忆） | grep / ripgrep KB_ROOT | 同左（零依赖） |
-| 元数据提取（语言分布、关键文件） | 读 codegraph 库 / sqlite3 | 直接读 README / package.json + 列目录 |
-| **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]`（零依赖） | 同左 |
+| 用途 | 做法 |
+|---|---|
+| 知识库内部检索（中文别名、文档、记忆） | `grep -rn "<关键词>" <KB_ROOT>/projects/*/*.md <KB_ROOT>/docs/` |
+| 代码定位（"X 功能在哪 / 怎么实现"） | 先 grep KB → 再 grep 源码 → 读文件确认行号 |
+| 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
+| **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]` |
 
-### 工具缺失流程（进代码模式时探测一次）
-
-1. **探测**：`command -v codegraph graphify`。会话内首次进代码模式做一次，本会话不重复提示。
-2. **提示**：缺哪个报哪个 + 给安装指引，请用户自行安装；**不等待、不阻塞**，继续流程。
-3. **降级**：按上表"无工具"列执行——能读什么写什么，不硬编未验证数据。
-4. **标注**：降级产物必加可信度标注行，格式见 `references/templates.md`。
-5. **升级（不静默重跑）**：工具后来可用且读到降级标注 → 提示用户可 `refresh <名>` 升级；
-   批量则报告"有 N 个降级项目可升级"。**未经用户确认，不自动覆写。**
+技能不安装、不探测、不依赖任何第三方工具。AI 若有更强的检索能力可自行使用，
+但技能流程必须能在纯文件系统下完成。
 
 ## 动作清单
 
@@ -115,10 +114,7 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 1. 确认路径与项目 id（与已有 id 重名 → 加父前缀，如 `oa-ai-excel-form-designer`）。
 2. 读结构（`package.json` / `pom.xml` / 顶层目录），写项目页 `projects/<id>/<id>.md`。
 3. 在 `paths.yaml` 登记 `id → path`。
-4. 探测 `codegraph` / `graphify`：
-   - 存在 → 后台跑一次索引（`codegraph sync <path>`），把结果写进项目页的索引行；
-   - 不存在 → 提示一句「未安装，跳过索引」，**不阻断建档**。
-5. 报告：已建档 + 是否已索引。
+4. 报告：已建档（写了哪些文件、概念表几条）。
 
 用户没这么说、只是在一个未入库目录里干活时：**不自动建档**，按普通检索处理。
 
@@ -137,13 +133,12 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 ## 铁律
 
 1. 所有读写走**文件系统**（read/write/bash），绝不用任何 MCP 工具。
-2. **任何代码/项目/文档/记忆查询，先查知识库，再查源项目或网络**：未 grep `<KB_ROOT>/` 前，不得调用 `web_search`、`bash` 全局 grep、`codegraph`、读 node_modules/源码等全局搜索。
+2. **任何代码/项目/文档/记忆查询，先查知识库，再查源项目或网络**：未 grep `<KB_ROOT>/` 前，不得调用 `web_search`、`bash` 全局 grep、读 node_modules/源码等全局搜索。
 3. 写任何笔记前读 `references/templates.md` 全文，按模板写，不凭记忆编 frontmatter。
 4. 项目路径**不写进笔记**——只在 `paths.yaml`。项目页存 `project_id` 与 `git_remote`（无则 `none`）。
-5. 代码模式项目页只存变化慢的信息（描述/结构/概念→位置）。快变信息不写，查询前现刷新
-   （有 codegraph 用 `sync`，无则重新读源码）。
+5. 代码模式项目页只存变化慢的信息（描述/结构/概念→位置）。快变信息不写，查询前现读源码确认。
 6. 不覆盖用户已有笔记，除非明确要求。
-7. 绝不动源项目的 `.codegraph/`、`graphify-out/` 或源码。
+7. 绝不动源项目目录里的任何文件；只读。
 8. 记忆文件遵循 `references/memory.md`：不存凭据，不重述代码已告诉的内容。
 9. 本技能不写任何 .gitignore（由用户决定版本控制范围）。
 10. **文档归属**：内容属于某已入库项目 → 归 `<KB_ROOT>/projects/<project_id>/docs/`；
@@ -162,7 +157,7 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 
 ## 维护
 
-- 代码索引会过期：定位前先 `codegraph sync <本机路径>`（无 codegraph 则重新读源码）。
+- 项目页会过期：定位前重新读源码确认，别信页面里记的行号。
 - 工具后装：库里的降级产物不会自动升级，用 `refresh <名>` 重跑；多处降级时批量提示用户。
 - **KB_ROOT 是数据不是代码**：默认根在用户主目录隐藏目录（`~/.local-kb/`），技能更新/重装不会覆盖它。
   换设备时同步该目录即可；`KB_ROOT` 环境变量可指向任意位置。
