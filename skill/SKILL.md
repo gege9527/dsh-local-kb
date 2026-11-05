@@ -103,7 +103,11 @@ AI 运行时按需直接调用，技能不检查是否存在。**工具 = 加速
 type 限 user/feedback/project/reference，project 按触发条件带 status: active|completed|archived）+ 补 MEMORY.md 指针；
 会话接续靠 `status: active` 记忆（每目录最多一条，写前走接管协议，索引行加 `⚡`）；写完过一遍「写入自检」清单。
 
-**active 不是可选项**：任务跨会话 / 改了 ≥3 个文件 / 上下文到 60% → 立刻建或更新 active，
+**写前先判类型（强制，不能跳）**：用户要「下次接着干」→ `type: project` + `status: active` + 索引行 `⚡`；
+要「下次查资料」→ `type: reference`，不写 status、不加 ⚡。
+判错的典型后果：把进行中的任务写成 reference，索引行没有 ⚡，下个会话不会自动打开，恢复点丢失。
+
+**active 不是可选项**：任务跨会话 / 改了 ≥3 个文件 / 上下文到 60%（任一命中）→ 立刻建或更新 active，
 条件与写法见 memory.md「active 写入时机」。不建 active 的长任务 = 超限后无法接续。
 
 ### 用户说「把这个项目加进知识库」
