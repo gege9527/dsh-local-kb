@@ -262,6 +262,46 @@ function projectDocNames(kbRoot, id) {
   }
 }
 
+/**
+ * 与项目关联的文档主题：读 docs/<主题>/_topic.md 的 projects 列表。
+ * 只返回明确绑定的主题，不列「通用」——每轮注入不该塞无差别提示。
+ */
+export function relatedDocTopics(kbRoot, projectId, cache = new Map()) {
+  const docsDir = join(kbRoot, 'docs')
+  let dirs
+  try {
+    dirs = readdirSync(docsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return []
+  }
+  const out = []
+  for (const dir of dirs) {
+    const file = readCached(join(docsDir, dir, '_topic.md'), cache)
+    if (file === undefined) continue
+    const head = file.text.slice(0, 1024)
+    const list = []
+    const block = head.match(/^projects:\s*\n((?:\s+-\s+.*\n?)*)/m)
+    if (block !== null) {
+      for (const line of block[1].split('\n')) {
+        const item = line.match(/^\s+-\s+(\S+)/)
+        if (item !== null) list.push(item[1].trim())
+      }
+    } else {
+      const inline = head.match(/^projects:\s*\[([^\]]*)\]\s*$/m)
+      if (inline !== null) {
+        for (const part of inline[1].split(',')) {
+          const id = part.trim()
+          if (id !== '') list.push(id)
+        }
+      }
+    }
+    if (list.includes(projectId)) out.push(dir)
+  }
+  return out
+}
+
 /** docs/ 的顶层分类目录与根层单篇文档（不递归、不报数量——数量会变）。 */
 function globalDocs(kbRoot) {
   try {
@@ -337,6 +377,8 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (description !== undefined) lines.push('  概览：' + description)
     const docs = projectDocNames(kbRoot, project.id)
     if (docs.length > 0) lines.push('  文档：' + docs.join('、'))
+    const topics = relatedDocTopics(kbRoot, project.id, cache)
+    if (topics.length > 0) lines.push('  相关文档：' + topics.map((dir) => 'docs/' + dir).join('、'))
   } else if (cwd !== undefined) {
     lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')
   }

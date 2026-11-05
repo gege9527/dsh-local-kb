@@ -10,6 +10,7 @@ import {
   memoryIndexText,
   parsePathsYaml,
   projectForPath,
+  relatedDocTopics,
   truncateIndex,
 } from '../inject.js'
 
@@ -145,6 +146,15 @@ fs.mkdirSync(path.join(noPaths, 'projects', 'x'), { recursive: true })
 const noMap = knowledgeMapText({ kbRoot: noPaths, cwd: '/tmp' })
 check('缺 paths.yaml 时标为未登记', noMap.includes('未登记（paths.yaml 没有条目）') && noMap.includes('x'), noMap)
 check('路径失效单独标注', map.includes('路径失效') && map.includes('other'), map)
+
+// 相关文档主题：_topic.md 的 projects 命中当前项目才列
+write('docs/DSH/_topic.md', '---\ntopic: DSH\nsummary: DSH 插件框架\nprojects:\n  - demo\n---\n')
+write('docs/Other/_topic.md', '---\ntopic: Other\nsummary: 别的主题\nprojects: []\n---\n')
+const mapTopics = knowledgeMapText({ kbRoot: root, cwd: nested })
+check('地图列出项目关联的文档主题', mapTopics.includes('相关文档：docs/DSH'), mapTopics)
+check('未绑定项目的主题不列', !mapTopics.includes('docs/Other'), mapTopics)
+check('relatedDocTopics 命中', relatedDocTopics(root, 'demo').join() === 'DSH', String(relatedDocTopics(root, 'demo')))
+check('relatedDocTopics 无绑定返回空', relatedDocTopics(root, 'nope').length === 0)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)

@@ -65,7 +65,7 @@ def iter_docs(kb_root):
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             for name in filenames:
-                if not name.endswith(".md") or name == "MEMORY.md":
+                if not name.endswith(".md") or name in ("MEMORY.md", "_topic.md"):
                     continue
                 full = os.path.join(dirpath, name)
                 rel = os.path.relpath(full, kb_root)

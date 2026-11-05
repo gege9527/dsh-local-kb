@@ -134,6 +134,9 @@ def check_memory_dir(d):
 
 
 def check_doc(p, project_doc=False):
+    # 主题自描述与索引类文件不是文档正文，单独校验
+    if os.path.basename(p) in ("_topic.md", "_projects.md"):
+        return
     rel = os.path.relpath(p, KB)
     text = read(p)
     fm = frontmatter(text)
@@ -218,10 +221,33 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
 
 # paths.yaml
 yp = os.path.join(KB, "paths.yaml")
+known_projects = set()
 if os.path.exists(yp):
     for line in read(yp).splitlines():
         if re.match(r"\s+path:\s*$", line):
             errors.append("paths.yaml 有空 path 值")
+        m = re.match(r"^([A-Za-z0-9_.-]+):\s*$", line)
+        if m:
+            known_projects.add(m.group(1))
+
+# 文档主题自描述：docs/<主题>/_topic.md 的 projects 必须已登记
+topic_total = 0
+if os.path.isdir(docs_root):
+    for d in sorted(os.listdir(docs_root)):
+        if not os.path.isdir(os.path.join(docs_root, d)):
+            continue
+        tfile = os.path.join(docs_root, d, "_topic.md")
+        if not os.path.exists(tfile):
+            continue
+        topic_total += 1
+        text = read(tfile)
+        if not re.search(r"^topic:\s*\S", text, re.M):
+            warns.append("_topic.md 缺 topic 字段: docs/%s" % d)
+        block = re.search(r"^projects:\s*\n((?:\s+-\s+.*\n?)*)", text, re.M)
+        if block is not None:
+            for pid in re.findall(r"^\s+-\s+(\S+)", block.group(1), re.M):
+                if known_projects and pid not in known_projects:
+                    warns.append("_topic.md 引用未登记项目 %s: docs/%s" % (pid, d))
 
 # 输出
 if JSON_MODE:
