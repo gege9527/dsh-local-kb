@@ -263,39 +263,46 @@ function projectDocNames(kbRoot, id) {
 }
 
 /**
- * 跨项目记忆：别的项目里提到当前项目的记忆笔记。
+ * 解析 memory/_links.yaml —— 项目级关联表（A → [B, C]）。
  *
- * 不靠人工标关联字段——「提到就关联」。只看 frontmatter + 正文开头 512 字节，
- * 项目路径不写进笔记（协议约束），所以命中基本就是内容层面的引用。
+ * 为什么不用文本匹配：项目 id 很短（web / ai / n1），正文里到处都是，
+ * 实测 193 条记忆里结构化引用只有 3 处，纯文本命中 47 条噪声。只认显式关联。
  */
-export function crossProjectMemories(kbRoot, projectId, cache = new Map(), limit = 3) {
-  const projectsDir = join(kbRoot, 'projects')
-  let dirs
-  try {
-    dirs = readdirSync(projectsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort()
-  } catch {
-    return []
-  }
-  const out = []
-  for (const id of dirs) {
-    if (id === projectId) continue
-    const memDir = join(projectsDir, id, 'memory')
-    let names
-    try {
-      names = readdirSync(memDir)
-    } catch {
+export function parseLinksYaml(text) {
+  const out = new Map()
+  let current
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\s+$/, '')
+    if (line === '' || line.startsWith('#')) continue
+    const head = line.match(/^([A-Za-z0-9_.-]+):\s*$/)
+    if (head) {
+      current = []
+      out.set(head[1], current)
       continue
     }
-    for (const name of names) {
-      if (!name.endsWith('.md') || name === 'MEMORY.md' || name === '_topic.md') continue
-      const file = readCached(join(memDir, name), cache)
-      if (file === undefined) continue
-      const head = file.text.slice(0, 512)
-      if (!head.includes(projectId)) continue
-      out.push({ project: id, slug: name.slice(0, -3), description: frontmatterDescription(head) })
+    const item = line.match(/^\s+-\s+(\S+)\s*$/)
+    if (item !== null && current !== undefined) current.push(item[1])
+  }
+  return out
+}
+
+/**
+ * 关联项目的记忆条目：读 _links.yaml，取被关联项目 MEMORY.md 的前几条指针。
+ * 只列指针行，不读笔记正文。
+ */
+export function crossProjectMemories(kbRoot, projectId, cache = new Map(), limit = 3) {
+  const file = readCached(join(kbRoot, 'memory', '_links.yaml'), cache)
+  if (file === undefined) return []
+  const related = parseLinksYaml(file.text).get(projectId) ?? []
+  const out = []
+  for (const id of related) {
+    const index = readCached(join(kbRoot, 'projects', id, 'memory', 'MEMORY.md'), cache)
+    if (index === undefined) continue
+    for (const line of index.text.split('\n')) {
+      const match = line.match(/^-\s*\[([^\]]+)\]\(([^)]+)\)/)
+      if (match === null) continue
+      const slug = match[2].replace(/^.*\//, '').replace(/\.md$/, '')
+      out.push({ project: id, slug, description: match[1] })
       if (out.length >= limit) return out
     }
   }
@@ -449,12 +456,8 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (concepts.length > 0) lines.push('  已收录：' + concepts.join('、') + '（先看项目页，别重复搜）')
     const cross = crossProjectMemories(kbRoot, project.id, cache)
     if (cross.length > 0) {
-      const items = cross.map((item) =>
-        item.description === ''
-          ? `projects/${item.project}/memory/${item.slug}.md`
-          : `projects/${item.project}/memory/${item.slug}.md（${item.description}）`,
-      )
-      lines.push('  相关记忆（别的项目里提到本项目）：' + items.join('；'))
+      const items = cross.map((item) => `${item.project}/${item.slug}（${item.description}）`)
+      lines.push('  相关项目记忆：' + items.join('；'))
     }
   } else if (cwd !== undefined) {
     lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')

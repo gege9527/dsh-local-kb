@@ -9,6 +9,7 @@ import {
   markActiveLines,
   conceptKeywords,
   crossProjectMemories,
+  parseLinksYaml,
   memoryIndexText,
   parsePathsYaml,
   projectForPath,
@@ -173,16 +174,17 @@ check('概念关键词只取短句', keywords.join() === '登录改版', keyword
 check('地图显示已收录', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('已收录：登录改版'), '')
 check('conceptKeywords 无项目页返回空', conceptKeywords(root, 'nope').length === 0)
 
-// 跨项目记忆：别的项目里提到当前项目才列
-write('projects/other/memory/tip.md', '---\nname: tip\ndescription: 别的项目踩过的坑（涉及 demo）\ntype: feedback\n---\n正文提到 demo 项目\n')
-write('projects/other/memory/unrelated.md', '---\nname: unrelated\ndescription: 无关结论\n---\n正文\n')
-write('projects/other/MEMORY.md', '# idx\n')
+// 跨项目记忆：由 memory/_links.yaml 显式声明，不做文本匹配
+write('memory/_links.yaml', '# 关联表\n\ndemo:\n  - other\n')
+write('projects/other/memory/MEMORY.md', '# idx\n- [别的项目踩过的坑](tip.md) — 涉及 demo\n- [无关结论](unrelated.md) — 无\n')
 const cross = crossProjectMemories(root, 'demo')
-check('跨项目记忆命中', cross.length === 1 && cross[0].project === 'other', JSON.stringify(cross))
-check('跨项目记忆带描述', cross[0].description.includes('别的项目踩过的坑'), JSON.stringify(cross))
-check('跨项目记忆排除无关', !cross.some((item) => item.slug === 'unrelated'))
-check('地图显示相关记忆', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('相关记忆（别的项目里提到本项目）'), '')
-check('crossProjectMemories 未知项目返回空', crossProjectMemories(root, 'nope').length === 0)
+check('关联表驱动命中', cross.length === 2 && cross[0].project === 'other', JSON.stringify(cross))
+check('关联表带描述', cross[0].description.includes('别的项目踩过的坑'), JSON.stringify(cross))
+check('关联表按索引顺序', cross[1].slug === 'unrelated', JSON.stringify(cross))
+check('地图显示相关项目记忆', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('相关项目记忆：other/tip'), '')
+check('无关联返回空', crossProjectMemories(root, 'nope').length === 0)
+check('parseLinksYaml 解析多值', parseLinksYaml('a:\n  - b\n  - c\n').get('a').join() === 'b,c')
+check('parseLinksYaml 忽略注释', parseLinksYaml('# x\na:\n  - b\n').size === 1)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
