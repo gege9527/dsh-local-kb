@@ -309,14 +309,14 @@ export function indexCapGuard(kbRoot) {
 /* =========================================================================
  * 禁止 AI 删除知识库内容
  * -------------------------------------------------------------------------
- * 规则：删除只由用户做。AI 只能「归档」——把笔记移进同目录的 archive/。
+ * 规则：删除只由用户做。AI 只能「归档」——把内容移进 <KB_ROOT>/archive/。
  * 这里拦的是 AI 通过 bash 删除：rm / unlink / shred / truncate / find -delete，
  * 以及把文件移出 KB（mv 出界等价于删除）。KB 内部的 mv（进 archive/）放行。
  * ======================================================================= */
 const BASH_DELETE_PATTERN = /\b(?:rm|rmdir|unlink|shred|truncate)\b|(?:^|\s)-delete\b/
 
 const deleteRefusal = (rel) => `知识库内容只归档不删除：${rel} 不能删。` +
-  `把笔记移到同目录的 archive/（例：memory/archive/2026-11-02-<slug>.md）再改索引；` +
+  `把内容移到 <KB_ROOT>/archive/（例：archive/memory/<slug>.md、archive/projects/<id>/）再改索引；` +
  `物理删除只能由用户在文件管理器里做。`
 
 /** 判定一次删除类操作；返回拒绝理由，undefined = 放行。 */

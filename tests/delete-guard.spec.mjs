@@ -1,6 +1,6 @@
 import { judgeKbDelete } from '../index.js'
 
-// ---- 删除守卫：AI 不能删 KB 内容，只能归档（mv 进 archive/） ----
+// ---- 删除守卫：AI 不能删 KB 内容，只能归档（mv 进 <KB_ROOT>/archive/） ----
 
 const KB = '/tmp/kb-delete-test'
 const results = []
@@ -21,7 +21,8 @@ check('shred KB 被拒', judge(`shred ${KB}/memory/x.md`), true)
 check('find -delete 被拒', judge(`find ${KB} -name '*.md' -delete`), true)
 check('rmdir KB 子目录被拒', judge(`rmdir ${KB}/projects/old`), true)
 
-check('mv 进 archive 放行', judge(`mv ${KB}/memory/x.md ${KB}/memory/archive/x.md`), false)
+check('mv 进根层 archive 放行', judge(`mv ${KB}/memory/x.md ${KB}/archive/memory/x.md`), false)
+check('项目归档进根层放行', judge(`mv ${KB}/projects/demo ${KB}/archive/projects/demo`), false)
 check('mv 到 KB 外被拒', judge(`mv ${KB}/memory/x.md /tmp/`), true)
 check('mv 从 KB 外进 KB 放行', judge(`mv /tmp/x.md ${KB}/memory/x.md`), false)
 
