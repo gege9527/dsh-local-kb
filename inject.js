@@ -263,6 +263,32 @@ function projectDocNames(kbRoot, id) {
 }
 
 /**
+ * 项目页「中文概念 → 位置」表里的关键词，供注入地图显示「已收录」。
+ * 只取短句（≤30 字符），自动生成的英文问句会被长度过滤掉。
+ */
+export function conceptKeywords(kbRoot, projectId, cache = new Map(), limit = 8) {
+  const file = readCached(join(kbRoot, 'projects', projectId, projectId + '.md'), cache)
+  if (file === undefined) return []
+  const text = file.text
+  const start = text.indexOf('## 中文概念 → 位置')
+  if (start === -1) return []
+  const rest = text.slice(start)
+  const end = rest.indexOf('\n## ', 5)
+  const block = end === -1 ? rest : rest.slice(0, end)
+  const out = []
+  for (const line of block.split('\n')) {
+    if (!line.startsWith('|')) continue
+    const cells = line.split('|').map((cell) => cell.trim())
+    const key = cells[1] ?? ''
+    if (key === '' || key === '想找什么' || /^[-: ]+$/.test(key)) continue
+    if (key.length > 30 || key.includes('Why ') || key.includes('What ')) continue
+    out.push(key)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+/**
  * 与项目关联的文档主题：读 docs/<主题>/_topic.md 的 projects 列表。
  * 只返回明确绑定的主题，不列「通用」——每轮注入不该塞无差别提示。
  */
@@ -379,6 +405,8 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (docs.length > 0) lines.push('  文档：' + docs.join('、'))
     const topics = relatedDocTopics(kbRoot, project.id, cache)
     if (topics.length > 0) lines.push('  相关文档：' + topics.map((dir) => 'docs/' + dir).join('、'))
+    const concepts = conceptKeywords(kbRoot, project.id, cache)
+    if (concepts.length > 0) lines.push('  已收录：' + concepts.join('、') + '（先看项目页，别重复搜）')
   } else if (cwd !== undefined) {
     lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')
   }

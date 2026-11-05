@@ -7,6 +7,7 @@ import {
   findActiveNotes,
   knowledgeMapText,
   markActiveLines,
+  conceptKeywords,
   memoryIndexText,
   parsePathsYaml,
   projectForPath,
@@ -155,6 +156,21 @@ check('地图列出项目关联的文档主题', mapTopics.includes('相关文�
 check('未绑定项目的主题不列', !mapTopics.includes('docs/Other'), mapTopics)
 check('relatedDocTopics 命中', relatedDocTopics(root, 'demo').join() === 'DSH', String(relatedDocTopics(root, 'demo')))
 check('relatedDocTopics 无绑定返回空', relatedDocTopics(root, 'nope').length === 0)
+
+// 已收录关键词：只取短句，过滤自动生成的英文问句
+write('projects/demo/demo.md', [
+  '---', 'title: demo', 'description: 演示项目的一句话说明', '---', '',
+  '## 中文概念 → 位置', '',
+  '| 想找什么 | 去哪 |', '|---|---|',
+  '| 登录改版 | \`src/login.ts:12\`（验证：读文件） |',
+  '| Why does X connect X to Y? | 见 graphify 报告对应章节 |',
+  '| | |', '',
+  '## 关键文件', '', '| 文件 | 说明 |', '|---|---|', '| a.js | 入口 |',
+].join('\n'))
+const keywords = conceptKeywords(root, 'demo')
+check('概念关键词只取短句', keywords.join() === '登录改版', keywords.join())
+check('地图显示已收录', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('已收录：登录改版'), '')
+check('conceptKeywords 无项目页返回空', conceptKeywords(root, 'nope').length === 0)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
