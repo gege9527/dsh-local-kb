@@ -76,12 +76,20 @@ description: >-
 | 用途 | 做法 |
 |---|---|
 | 知识库内部检索（中文别名、文档、记忆） | `grep -rn "<关键词>" <KB_ROOT>/projects/*/*.md <KB_ROOT>/docs/` |
+| 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文 |
 | 代码定位（"X 功能在哪 / 怎么实现"） | 先 grep KB → 再 grep 源码 → 读文件确认行号 |
 | 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
 | **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]` |
 
 技能不安装、不探测、不依赖任何第三方工具。AI 若有更强的检索能力可自行使用，
 但技能流程必须能在纯文件系统下完成。
+
+`kb-search` 需要卡片索引（首次或文档变更后建一次）：
+
+```bash
+python3 <技能目录>/tools/kb-card.py <KB_ROOT>       # 生成卡片
+python3 <技能目录>/tools/kb-search.py "<关键词>" --rebuild   # 建索引并检索
+```
 
 ## 动作清单
 
