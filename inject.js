@@ -263,6 +263,46 @@ function projectDocNames(kbRoot, id) {
 }
 
 /**
+ * 跨项目记忆：别的项目里提到当前项目的记忆笔记。
+ *
+ * 不靠人工标关联字段——「提到就关联」。只看 frontmatter + 正文开头 512 字节，
+ * 项目路径不写进笔记（协议约束），所以命中基本就是内容层面的引用。
+ */
+export function crossProjectMemories(kbRoot, projectId, cache = new Map(), limit = 3) {
+  const projectsDir = join(kbRoot, 'projects')
+  let dirs
+  try {
+    dirs = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+  } catch {
+    return []
+  }
+  const out = []
+  for (const id of dirs) {
+    if (id === projectId) continue
+    const memDir = join(projectsDir, id, 'memory')
+    let names
+    try {
+      names = readdirSync(memDir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!name.endsWith('.md') || name === 'MEMORY.md' || name === '_topic.md') continue
+      const file = readCached(join(memDir, name), cache)
+      if (file === undefined) continue
+      const head = file.text.slice(0, 512)
+      if (!head.includes(projectId)) continue
+      out.push({ project: id, slug: name.slice(0, -3), description: frontmatterDescription(head) })
+      if (out.length >= limit) return out
+    }
+  }
+  return out
+}
+
+/**
  * 项目页「中文概念 → 位置」表里的关键词，供注入地图显示「已收录」。
  * 只取短句（≤30 字符），自动生成的英文问句会被长度过滤掉。
  */
@@ -407,6 +447,15 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (topics.length > 0) lines.push('  相关文档：' + topics.map((dir) => 'docs/' + dir).join('、'))
     const concepts = conceptKeywords(kbRoot, project.id, cache)
     if (concepts.length > 0) lines.push('  已收录：' + concepts.join('、') + '（先看项目页，别重复搜）')
+    const cross = crossProjectMemories(kbRoot, project.id, cache)
+    if (cross.length > 0) {
+      const items = cross.map((item) =>
+        item.description === ''
+          ? `projects/${item.project}/memory/${item.slug}.md`
+          : `projects/${item.project}/memory/${item.slug}.md（${item.description}）`,
+      )
+      lines.push('  相关记忆（别的项目里提到本项目）：' + items.join('；'))
+    }
   } else if (cwd !== undefined) {
     lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')
   }

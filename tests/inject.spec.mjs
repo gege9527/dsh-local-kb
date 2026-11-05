@@ -8,6 +8,7 @@ import {
   knowledgeMapText,
   markActiveLines,
   conceptKeywords,
+  crossProjectMemories,
   memoryIndexText,
   parsePathsYaml,
   projectForPath,
@@ -171,6 +172,17 @@ const keywords = conceptKeywords(root, 'demo')
 check('概念关键词只取短句', keywords.join() === '登录改版', keywords.join())
 check('地图显示已收录', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('已收录：登录改版'), '')
 check('conceptKeywords 无项目页返回空', conceptKeywords(root, 'nope').length === 0)
+
+// 跨项目记忆：别的项目里提到当前项目才列
+write('projects/other/memory/tip.md', '---\nname: tip\ndescription: 别的项目踩过的坑（涉及 demo）\ntype: feedback\n---\n正文提到 demo 项目\n')
+write('projects/other/memory/unrelated.md', '---\nname: unrelated\ndescription: 无关结论\n---\n正文\n')
+write('projects/other/MEMORY.md', '# idx\n')
+const cross = crossProjectMemories(root, 'demo')
+check('跨项目记忆命中', cross.length === 1 && cross[0].project === 'other', JSON.stringify(cross))
+check('跨项目记忆带描述', cross[0].description.includes('别的项目踩过的坑'), JSON.stringify(cross))
+check('跨项目记忆排除无关', !cross.some((item) => item.slug === 'unrelated'))
+check('地图显示相关记忆', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('相关记忆（别的项目里提到本项目）'), '')
+check('crossProjectMemories 未知项目返回空', crossProjectMemories(root, 'nope').length === 0)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
