@@ -141,8 +141,13 @@ def memory_roots(kb_root):
 
 
 def memory_hits(kb_root, term, limit=5):
-    """记忆层：直接 grep 正文，不建索引——193 条 / 1.2M，实测 0.01s。"""
-    hits = []
+    """记忆层：直接 grep 正文，不建索引——193 条 / 1.2M，实测 0.01s。
+
+    排序：description 命中优先。正文命中常常只是顺带提到（噪声高），
+    排在后面，满了就截掉。
+    """
+    desc_hits = []
+    body_hits = []
     for root in memory_roots(kb_root):
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if d != "archive"]
@@ -156,11 +161,16 @@ def memory_hits(kb_root, term, limit=5):
                     continue
                 if term not in text:
                     continue
-                desc = re.search(r"^description:\s*(.+)$", text[:1024], re.M)
-                hits.append((os.path.relpath(full, kb_root), desc.group(1).strip() if desc else ""))
-                if len(hits) >= limit:
-                    return hits
-    return hits
+                m = re.search(r"^description:\s*(.+)$", text[:1024], re.M)
+                desc = m.group(1).strip() if m else ""
+                item = (os.path.relpath(full, kb_root), desc)
+                if term in desc:
+                    desc_hits.append(item)
+                else:
+                    # 正文命中按出现次数排，顺带提一句的沉下去
+                    body_hits.append((text.count(term), item))
+    body_hits.sort(key=lambda pair: -pair[0])
+    return (desc_hits + [item for _, item in body_hits])[:limit]
 
 
 def main(argv):
