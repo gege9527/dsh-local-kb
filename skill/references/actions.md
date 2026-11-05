@@ -41,9 +41,9 @@
 
 **永不物理删除。** 步骤：
 
-1. **项目**：`projects/<id>/` 整体移入 `projects/archive/<id>/`；
+1. **项目**：`projects/<id>/` 整体移入 `archive/projects/<id>/`；
    paths.yaml 条目**保留**（源项目未动，映射仍有效）；项目页 frontmatter 加 `status: archived`
-2. **文档**：移入同层 `archive/`（如 `docs/archive/` 或 `projects/<id>/docs/archive/`）；
+2. **文档**：`docs/<文档集>/` 整体移入 `archive/docs/<文档集>/`；
    正文头部加一行 `> 已归档 YYYY-MM-DD`
 3. **记忆**：`memory/<slug>.md` → `memory/archive/<slug>.md`；从 `MEMORY.md` 移除指针行
 4. 校验：原位置无该文件；`archive/` 下存在；索引已更新

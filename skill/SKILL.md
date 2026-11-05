@@ -46,13 +46,15 @@ description: >-
   paths.yaml                   # 项目ID → 本机路径 + git_remote（路径唯一存放处）
   memory/                      # 全局记忆（user / 全局 feedback / reference）
   docs/                        # 通用/跨项目文档（扁平；多文件文档集才建子目录）
-  projects/                    # 代码项目
-    archive/                   # 归档的项目（不删除）
+  projects/                    # 代码项目（活跃）
     <project_id>/
       <project_id>.md          # 项目主页
       arch/<project_id>-arch.md  # 架构摘要
       docs/                    # 项目产出文档（分析/方案/报告）
       memory/                  # 项目级记忆（project / 本项目 reference）
+  archive/                     # 归档（不删除）：离线的项目与文档都放这里
+    projects/<project_id>/     # 归档的项目（整体移入）
+    docs/<文档集>/              # 归档的文档集
 ```
 
 所有目录名与文件名一律用英文/拼音/ASCII。

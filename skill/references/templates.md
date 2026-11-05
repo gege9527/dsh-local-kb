@@ -144,13 +144,15 @@ How to apply: <下次怎么用>
   paths.yaml     ← 项目ID → 本机路径 + git_remote（路径唯一存放处）
   memory/        ← 全局记忆（MEMORY.md 索引）
   docs/          ← 通用/跨项目文档
-  projects/      ← 代码项目
-    archive/     ← 归档项目（不删除）
+  projects/      ← 代码项目（活跃）
     <项目ID>/
       <项目ID>.md     ← 项目主页（含「项目资料」节）
       arch/           ← 架构摘要
       docs/           ← 项目产出文档
       memory/         ← 项目级记忆
+  archive/       ← 归档（不删除）
+    projects/<项目ID>/   ← 归档的项目
+    docs/<文档集>/       ← 归档的文档集
 \`\`\`
 
 ## 检索
