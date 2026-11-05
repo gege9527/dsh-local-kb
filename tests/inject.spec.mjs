@@ -183,6 +183,9 @@ check('关联表带描述', cross[0].description.includes('别的项目踩过的
 check('关联表按索引顺序', cross[1].slug === 'unrelated', JSON.stringify(cross))
 check('地图显示相关项目记忆', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('相关项目记忆：other/tip'), '')
 check('无关联返回空', crossProjectMemories(root, 'nope').length === 0)
+write('projects/other/memory/MEMORY.md', '# idx\n- [别的项目踩过的坑](tip.md) — 涉及 demo\n')
+const back = crossProjectMemories(root, 'other')
+check('关联双向：被关联项目也能看到', back.length === 1 && back[0].project === 'demo' || back.some((item) => item.project === 'demo'), JSON.stringify(back))
 check('parseLinksYaml 解析多值', parseLinksYaml('a:\n  - b\n  - c\n').get('a').join() === 'b,c')
 check('parseLinksYaml 忽略注释', parseLinksYaml('# x\na:\n  - b\n').size === 1)
 

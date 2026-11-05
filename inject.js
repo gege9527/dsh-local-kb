@@ -293,7 +293,14 @@ export function parseLinksYaml(text) {
 export function crossProjectMemories(kbRoot, projectId, cache = new Map(), limit = 3) {
   const file = readCached(join(kbRoot, 'memory', '_links.yaml'), cache)
   if (file === undefined) return []
-  const related = parseLinksYaml(file.text).get(projectId) ?? []
+  const links = parseLinksYaml(file.text)
+  // 双向：A → B 写了，查 B 时也能看到 A 的记忆（父子项目尤其需要）。
+  const forward = links.get(projectId) ?? []
+  const backward = []
+  for (const [id, list] of links) {
+    if (id !== projectId && list.includes(projectId)) backward.push(id)
+  }
+  const related = [...new Set([...forward, ...backward])]
   const out = []
   for (const id of related) {
     const index = readCached(join(kbRoot, 'projects', id, 'memory', 'MEMORY.md'), cache)
