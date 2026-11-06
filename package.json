@@ -70,9 +70,10 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "test": "node tests/skill-content.spec.mjs && node tests/tools.spec.mjs && node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs && node tests/reminder.spec.mjs && node tests/settings.spec.mjs && node tests/uninstall.spec.mjs && node tests/hit-rate.spec.mjs",
+    "test": "node tests/skill-content.spec.mjs && node tests/tools.spec.mjs && node tests/kb-check.spec.mjs && node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs && node tests/reminder.spec.mjs && node tests/settings.spec.mjs && node tests/uninstall.spec.mjs && node tests/hit-rate.spec.mjs",
     "test:skill": "node tests/skill-content.spec.mjs",
     "test:tools": "node tests/tools.spec.mjs",
+    "test:kb-check": "node tests/kb-check.spec.mjs",
     "test:gate": "node tests/gate.spec.mjs",
     "test:api": "node tests/api.spec.mjs",
     "test:path": "node tests/path.spec.mjs",

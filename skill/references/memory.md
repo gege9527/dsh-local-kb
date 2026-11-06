@@ -93,6 +93,22 @@ active 正文末行带**持有者声明**，就地更新时改写：
 活跃任务之外的记忆同样是正常召回对象。
 **每个记忆目录一个 `MEMORY.md`，只索引本目录内的文件。**
 
+**漏指针用 `--fix` 补，别手抖补错段**：
+
+```bash
+python3 <技能目录>/tools/kb-check.py [KB_ROOT] --fix           # 只预览要追加什么
+python3 <技能目录>/tools/kb-check.py [KB_ROOT] --fix --write   # 落盘
+```
+
+它只做「把有笔记没索引的条目追加进对应小节」，**已有行一字不动**。落点规则：
+先找同名 type 小节（`## project` / `## feedback` / …）；找不到但有 `## active` / `## completed`
+且笔记是 `type: project`，就按 status 落；都没有则**新建对应 type 小节**（不会塞进 `## completed`
+这类 status 分组段，否则自己制造分组不一致）。追加的是 `- [name](file.md)` 占位行，**描述由你随后补**。
+
+**status 分组自洽（opt-in）**：索引默认按 type 分组，此时不校验分组归属。一旦你写了
+`## active` / `## completed` 小节，该小节成员必须与文件 frontmatter 的 `status` 一致——
+kb-check 会双向检查（段内错了报「实际 status」，该在而没在的报「不在索引段」）。不想被管就别用这两个小节名。
+
 ## 召回协议
 
 ### 什么算 task（常驻判定，先于一切）
@@ -203,7 +219,7 @@ active 正文末行带**持有者声明**，就地更新时改写：
 - [ ] 已去重（同一事实优先更新旧笔记，不新建）
 - [ ] **全局不含当前状态**；仅 `type: project + status: active` 例外——可存目标/状态/决策/约束/阻塞/下一步（相对日期转绝对），其余记忆只存已发生事实与稳定指针
 - [ ] 已做矛盾检测；推翻旧结论时旧记忆已更新并标 `Superseded`
-- [ ] 已运行 `tools/kb-check.py` 且无错误
+- [ ] 已运行 `tools/kb-check.py` 且无错误（漏指针 → `--fix --write` 补，再跑一遍确认）
 - [ ] 无凭据/密钥值
 
 ## 什么值得存 / 禁止存

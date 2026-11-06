@@ -83,7 +83,7 @@ description: >-
 | 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文 |
 | 代码定位（"X 功能在哪 / 怎么实现"） | 先 grep KB → 再 grep 源码 → 读文件确认行号 |
 | 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
-| **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]` |
+| **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]`；带 `--fix` 预览补索引，加 `--write` 落盘 |
 
 技能不安装、不探测、不依赖任何第三方工具。AI 若有更强的检索能力可自行使用，
 但技能流程必须能在纯文件系统下完成。
@@ -162,6 +162,8 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
     python3 <技能目录>/tools/kb-check.py [KB_ROOT]
     ```
     退出码非 0（有错误）→ 报告并修正，**不得声称写入成功**。
+    漏了索引指针时用 `--fix` 补：默认只预览要追加什么，`--fix --write` 才落盘。
+    它只追加缺失的指针行（`- [name](file.md)` 占位，描述留给你补），**不改任何已有行**。
 
 ## 完成报告
 
