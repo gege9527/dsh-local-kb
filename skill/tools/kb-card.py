@@ -69,12 +69,9 @@ def iter_docs(kb_root):
                     continue
                 full = os.path.join(dirpath, name)
                 rel = os.path.relpath(full, kb_root)
-                # 项目页与记忆不生成卡片，它们本身是索引
-                if base == "projects":
-                    parts = rel.split("/")
-                    is_page = len(parts) == 3 and parts[2] == parts[1] + ".md"
-                    if is_page or "/memory/" in rel:
-                        continue
+                # 记忆不生成卡片（本身是索引）；项目页要生成，否则搜不到「某项目是干嘛的」
+                if base == "projects" and "/memory/" in rel:
+                    continue
                 yield rel, full
 
 

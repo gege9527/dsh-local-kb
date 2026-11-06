@@ -1304,7 +1304,15 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       if (!agent || typeof agent !== 'object') return null
       let st = states.get(agent)
       if (!st) {
-        st = { kbChecked: false, memoryChecked: false, reminded: { global: false, memory: false, web: false } }
+        st = {
+          kbChecked: false,
+          memoryChecked: false,
+          // reminded：本任务（用户一条新消息）内是否已提醒；sent：本会话累计发送次数。
+          // 只有 reminded 会随新用户消息重置，sent 不重置——长会话里「每任务 1 次」
+          // 实测会把同一句话刷 4 遍（11-05 13:34 那个调研会话），噪音大于收益。
+          reminded: { global: false, memory: false, web: false },
+          sent: { global: 0, memory: 0, web: 0 },
+        }
         states.set(agent, st)
       }
       return st
@@ -1358,6 +1366,13 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
     }
     const summaryOf = { global: '提示：本地检索优先用知识库', memory: '记忆先行：先读 KB memory/MEMORY.md', web: '提示：本地问题先查知识库' }
+    /** 同一类提醒全会话最多 2 次：留一次「换任务后还记得」，挡住反复刷屏。 */
+    const MAX_REMINDERS_PER_SESSION = 2
+    const mayRemind = (st, kind) => !st.reminded[kind] && (st.sent[kind] ?? 0) < MAX_REMINDERS_PER_SESSION
+    const noteRemind = (st, kind) => {
+      st.reminded[kind] = true
+      st.sent[kind] = (st.sent[kind] ?? 0) + 1
+    }
     const makeReminder = async (text, summary) => {
       const create = await reminderFactory
       const msg = { role: 'user', content: [{ type: 'text', text }], source: { kind: 'local-kb-reminder', form: 'notice', summary } }
@@ -1407,20 +1422,20 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         const args = exec.arguments
         let reminder = null
         if (tool === 'web_search' || tool === 'web_fetch') {
-          if (!st.kbChecked && !st.reminded.web) { reminder = await makeReminder(reminderTexts.web, summaryOf.web); st.reminded.web = true }
+          if (!st.kbChecked && mayRemind(st, 'web')) { reminder = await makeReminder(reminderTexts.web, summaryOf.web); noteRemind(st, 'web') }
         } else if (tool === 'bash') {
           const cmd = typeof args?.command === 'string' ? args.command : ''
           if (!touchesKb(cmd) && cmd.length <= MAX_CMD) {
-            if (!st.memoryChecked && !st.reminded.memory && /\b(grep|rg|find)\b/.test(cmd)) {
-              reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); st.reminded.memory = true
-            } else if (st.kbChecked && isGlobalSearch(cmd, args) && !st.reminded.global) {
-              reminder = await makeReminder(reminderTexts.global, summaryOf.global); st.reminded.global = true
+            if (!st.memoryChecked && mayRemind(st, 'memory') && /\b(grep|rg|find)\b/.test(cmd)) {
+              reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); noteRemind(st, 'memory')
+            } else if (st.kbChecked && isGlobalSearch(cmd, args) && mayRemind(st, 'global')) {
+              reminder = await makeReminder(reminderTexts.global, summaryOf.global); noteRemind(st, 'global')
             }
           }
         } else if (tool === 'read') {
           const p = typeof args?.file_path === 'string' ? args.file_path : ''
-          if (!touchesKb(p) && !st.memoryChecked && !st.reminded.memory) {
-            reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); st.reminded.memory = true
+          if (!touchesKb(p) && !st.memoryChecked && mayRemind(st, 'memory')) {
+            reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); noteRemind(st, 'memory')
           }
         }
         if (!reminder) return decision

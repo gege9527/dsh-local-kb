@@ -46,12 +46,13 @@ write('projects/demo/memory/MEMORY.md', '# idx\n')
 const run = (args) => execFileSync(py, [path.join(toolsDir, 'kb-card.py'), ...args], { encoding: 'utf8' })
 const search = (args) => execFileSync(py, [path.join(toolsDir, 'kb-search.py'), ...args], { encoding: 'utf8' })
 
-// 1. 卡片生成：项目页与记忆不生成卡片，文档与项目 docs 生成
+// 1. 卡片生成：记忆不生成卡片；文档、项目 docs、项目页都生成
 const cardOut = run([kb])
-check('kb-card 报告文档数', cardOut.includes('文档 2'), cardOut)
+check('kb-card 报告文档数', cardOut.includes('文档 3'), cardOut)
 const cards = fs.readdirSync(path.join(kb, '.kb-index', 'cards'))
-check('生成 2 张卡片', cards.length === 2, cards.join(','))
-check('项目页不生成卡片', !cards.some((n) => n.startsWith('projects-demo-demo')), cards.join(','))
+check('生成 3 张卡片', cards.length === 3, cards.join(','))
+check('项目页也生成卡片', cards.some((n) => n.startsWith('projects-demo-demo')), cards.join(','))
+check('记忆不生成卡片', !cards.some((n) => n.includes('MEMORY')), cards.join(','))
 
 // 2. 卡片内容：标题、摘要、小节行号
 const card = fs.readFileSync(path.join(kb, '.kb-index', 'cards', cards.find((n) => n.includes('plugin'))), 'utf8')
@@ -67,6 +68,12 @@ check('检索给出行号', /L\d+:/.test(hit), hit)
 // 4. 两字走 LIKE 兜底
 const short = search(['注册', kb])
 check('两字检索命中', short.includes('命中'), short)
+
+// 4b. 整句提问也能命中：拆词后不该被整串匹配拖死
+const sentence = search(['插件加载是怎么实现的', kb])
+check('整句提问命中文档', sentence.includes('docs/DSH/plugin.md'), sentence)
+const sentenceProject = search(['demo 项目是干嘛的', kb])
+check('整句提问命中项目页', sentenceProject.includes('projects/demo/demo.md'), sentenceProject)
 
 // 5. 未命中给明确提示
 const miss = search(['绝对不存在的词', kb])
