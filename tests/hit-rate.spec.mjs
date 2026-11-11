@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 // ---- kb-search 命中率回归：整句提问、关键词、项目页、记忆层、负例 ----
@@ -93,8 +93,44 @@ const hit5 = h5 / positives
 check('hit@1 ≥ 60%', hit1 >= 0.6, hit1.toFixed(2))
 check('hit@5 ≥ 85%', hit5 >= 0.85, hit5.toFixed(2))
 check('负例不误报', rows.filter((r) => r.pos === 'FALSE-HIT').length === 0, JSON.stringify(rows.filter((r) => r.pos === 'FALSE-HIT')))
+// 别名层：声明过的名字必须能召回到；description 只给中间权重，别把宽泛描述顶成误伤
+write('projects/kit/kit.md', ['---', 'title: "kit 组件库"', 'type: doc', 'description: 内部 UI 组件库，含按钮、表格、弹窗', 'aliases: 组件仓库, 内部组件库', '---', '', '基础组件集合，供各业务线复用。'].join('\n'))
+write('docs/ui/buttons.md', doc('按钮样式规范', '按钮的尺寸、颜色与圆角规范。'))
+
+const aliasOut = search('组件仓库里都有什么')
+const aliasFirst = (/^1\. (.+)$/m.exec(aliasOut) || [])[1] || ''
+check('别名命中置顶', aliasFirst === 'projects/kit/kit.md', aliasOut)
+
+const descOut = search('内部 UI 组件库怎么用')
+check('描述命中', descOut.includes('projects/kit/kit.md'), descOut)
+
+write('memory/algo-note.md', ['---', 'name: algo-note', 'description: 算法选型记录', 'aliases: 选型笔记, 算法台账', 'type: reference', '---', '', '比较过几种方案。'].join('\n'))
+const memAlias = search('翻一下算法台账')
+check('记忆别名命中', memAlias.includes('algo-note.md'), memAlias)
+
+check('别名查询不误伤邻近文档', !aliasFirst.includes('buttons.md'), aliasOut)
+
 const decoy = search('量子纠缠是什么')
 check('bigram 巧合不触发记忆', !decoy.includes('scheme-note.md'), decoy)
+// 结果可信度：低覆盖要给警告，未命中要说清是哪一种
+const weakOut = search('缓存的量子纠缠贝尔不等式')
+check('低覆盖给低置信警告', weakOut.includes('低置信'), weakOut)
+const strongOut = search('条件格式')
+check('正常命中不误报低置信', !strongOut.includes('低置信'), strongOut)
+const noTopic = search('巴黎地铁票价')
+check('未命中区分"库内没有"', noTopic.includes('都没出现过') || noTopic.includes('相关阈值'), noTopic)
+
+// grade_hits 纯函数：分母必须是查询全部辅助词，不能被"有 df 的词"缩小
+const gradeCode = [
+  'import importlib.util, sys',
+  'spec = importlib.util.spec_from_file_location("s", sys.argv[1])',
+  'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+  'card = {"aliases": [], "head": "x", "desc": "", "body": "x", "doc": "x"}',
+  'print(m.grade_hits([(1.0, card, ["不等"])], ["量子", "纠缠", "不等", "贝尔"], "量子纠缠的贝尔不等式")[0])',
+].join('\n')
+const gradeOut = spawnSync(py, ['-c', gradeCode, path.join(toolsDir, 'kb-search.py')], { encoding: 'utf8' })
+check('整句只剩一个巧合词判 weak', (gradeOut.stdout || '').trim() === 'weak', gradeOut.stdout + (gradeOut.stderr || ''))
+
 const sentence = rows.filter((r) => r.kind === '整句' && r.pos !== 'MISS' && r.pos !== 'FALSE-HIT').length
 check('整句提问 ≥ 5/6', sentence >= 5, sentence + '/6')
 

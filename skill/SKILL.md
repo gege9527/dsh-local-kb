@@ -79,8 +79,14 @@ description: >-
 
 | 用途 | 做法 |
 |---|---|
-| 知识库内部检索（中文别名、文档、记忆） | `grep -rn "<关键词>" <KB_ROOT>/projects/*/*.md <KB_ROOT>/docs/` |
-| 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文 |
+| 知识库内部检索（中文别名、文档、记忆） | 优先 `python3 <技能目录>/tools/kb-search.py "<关键词>"`（自带置信分级）；要裸 grep 时**限定范围 + 排除归档**，别扫 `<KB_ROOT>` 整库 |
+| 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文。frontmatter 的 `description` 给中间权重，`aliases` 整串出现在查询里直接置顶 |
+
+**读检索结果先看置信**：
+- `⚠ 低置信：命中 1/9 个词` → 结果多半是字面巧合，**别直接当答案**，换关键词或看「相关记忆」段。
+- `未命中：查询里的词在知识库里都没出现过` → 这个主题确实没入库，不是检索没找到。
+- `未命中：N 个词在库中出现过…但没有一篇达到相关阈值` → 有相近内容但措辞不同，换说法再试。
+- 加 `--explain` 看每篇的证据类型（`alias_hit` / `exact_title` / `desc_match` / `keyword`）与分数。
 | 代码定位（"X 功能在哪 / 怎么实现"） | 先 grep KB → 再 grep 源码 → 读文件确认行号 |
 | 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
 | **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]`；带 `--fix` 预览补索引，加 `--write` 落盘 |
@@ -88,7 +94,19 @@ description: >-
 技能不安装、不探测、不依赖任何第三方工具。AI 若有更强的检索能力可自行使用，
 但技能流程必须能在纯文件系统下完成。
 
-`kb-search` 需要卡片索引（首次或文档变更后建一次）：
+**裸 grep 的正确范围**（别对 `<KB_ROOT>` 整库 grep）：
+
+```bash
+# 当前项目 + 全局记忆 + 文档，排除 archive（旧版本会污染召回）
+grep -rn "<关键词>" <KB_ROOT>/projects/<id>/ <KB_ROOT>/memory/ <KB_ROOT>/docs/ --exclude-dir=archive
+```
+
+为什么不扫整库：`archive/` 存旧版本笔记，grep 会把过期结论当当前结论返回；
+不带 `<id>` 会跨项目召回无关记忆（车机项目的 "adb" 会混进手机排障）。
+跨项目找同一个东西时才显式写多个 `projects/<a>/ projects/<b>/`。
+
+`kb-search` 需要卡片索引（首次或文档变更后建一次）。卡片格式版本变化（新增收录字段）时
+检索会自己重建一次，不用手动 `--rebuild`：
 
 ```bash
 python3 <技能目录>/tools/kb-card.py <KB_ROOT>       # 生成卡片

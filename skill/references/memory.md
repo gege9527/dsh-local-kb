@@ -43,6 +43,8 @@ type: user | feedback | project | reference
 status: active | completed | archived   # 仅 project 可带（可选）；active = 当前活跃任务
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
+aliases:                        # 可选：用户可能用的俗称/简称，kb-search 命中即置顶
+  - <2~12 字的说法>
 ---
 
 <正文>
@@ -53,6 +55,10 @@ How to apply: <下次怎么用>
 
 标签必须以**行首**呈现：`**Why:**`、`Why:` 或 `## Why:` 均可，全角冒号 `：` 也接受。校验器认的是"带冒号的标签行"——埋进段落里、`## How` 缺冒号、`How:` 缺 "to apply" 都不算。
 ```
+
+**aliases 怎么写**：写用户真会打出来的短说法（"命中率"、"先问再改"、"插件仓库"），不是标题复述。
+2~12 字、全局唯一（重名会互相抢，宁可不写）、判定是「别名整串出现在查询里」——
+所以写"手机投屏"，别写"关于手机投屏的那些事"。
 
 `feedback` = 如何工作的指导（跨任务方法）；`project` = 我们在做什么（特定努力）。
 判别对举："回复中文" = feedback（跨任务方法）；"恢复迁移：修阻塞的 serializer 测试" = project（当前努力）。

@@ -16,6 +16,22 @@ import sys
 CARD_DIR = ".kb-index/cards"
 SUMMARY_CHARS = 200
 SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
+CARD_VERSION = 2  # 2 = 卡片收录 description / aliases，检索端靠它判断要不要整库重建
+VERSION_FILE = ".card-version"
+
+
+def version_path(cards_dir):
+    """版本文件放 cards/ 的父目录：cards/ 只放卡片，列目录时不会被当成孤儿。"""
+    return os.path.join(os.path.dirname(cards_dir), VERSION_FILE)
+
+
+def read_version(cards_dir):
+    """读卡片格式版本；没有文件或读不懂都当 0（触发一次重建成当前版本）。"""
+    try:
+        with open(version_path(cards_dir), encoding="utf-8") as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
 
 
 def frontmatter(text):
@@ -75,6 +91,28 @@ def iter_docs(kb_root):
                 yield rel, full
 
 
+def read_aliases(text):
+    """别名取多种写法：aliases: a, b / aliases: [a, b] / YAML 多行 - a 换 - b。
+    项目页一直用多行列表，只认单行会把已有别名全部读丢。"""
+    m = re.search(r"^aliases:[ \t]*(.*)$", text, re.M)
+    if not m:
+        return []
+    rest = m.group(1).strip()
+    if rest and rest not in ("|", ">"):
+        return [x.strip().strip("'\"") for x in re.split(r"[,、]", rest.strip("[]")) if x.strip()]
+    out = []
+    tail = text[m.end():]
+    for line in tail.split("\n"):
+        if not line.strip():
+            continue
+        mm = re.match(r"^[ \t]+-[ \t]*(.+)$", line)
+        if mm:
+            out.append(mm.group(1).strip().strip("'\""))
+            continue
+        break
+    return out
+
+
 def build_card(kb_root, rel, full):
     text = open(full, encoding="utf-8").read()
     meta, body = frontmatter(text)
@@ -82,11 +120,21 @@ def build_card(kb_root, rel, full):
     title = meta.get("title", "").strip('"') or os.path.basename(rel)[:-3]
     summary = first_paragraph(body)
     secs = sections(body, offset)
+    desc = " ".join((meta.get("description") or "").split())
+    alias = ", ".join(read_aliases(text))
     lines = [
         "---",
         "doc: " + rel,
         "title: " + title,
         "type: card",
+        "card: %d" % CARD_VERSION,
+    ]
+    # 别名与钩子单独成行：检索端给中间权重（不是标题权重），避免宽泛描述误伤排序
+    if desc:
+        lines.append("desc: " + desc)
+    if alias:
+        lines.append("alias: " + alias)
+    lines += [
         "---",
         "",
         "## 摘要",
@@ -131,6 +179,9 @@ def main(argv):
             fh.write(card)
         written += 1
     if check_only:
+        if read_version(out_dir) != CARD_VERSION:
+            print("文档 %d，卡片版本需重建（当前 %s，期望 %d）" % (count, read_version(out_dir), CARD_VERSION))
+            sys.exit(1)
         print("文档 %d，缺卡 %d" % (count, stale))
         sys.exit(1 if stale else 0)
     removed = 0
@@ -142,6 +193,12 @@ def main(argv):
                     removed += 1
                 except OSError:
                     pass
+    # 版本落盘：卡片格式变了（比如开始收录 desc/alias），检索端据此整库重建一次
+    try:
+        with open(version_path(out_dir), "w", encoding="utf-8") as fh:
+            fh.write(str(CARD_VERSION) + "\n")
+    except OSError:
+        pass
     print("文档 %d，写卡 %d，清孤儿 %d → %s" % (count, written, removed, out_dir))
 
 

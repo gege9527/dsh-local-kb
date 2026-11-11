@@ -17,9 +17,13 @@ import subprocess
 import sys
 
 CARD_DIR = ".kb-index/cards"
+VERSION_FILE = ".card-version"
+CARD_VERSION = 2  # 与 kb-card.py 同步：2 起卡片收录 desc / alias
 MAX_HITS_PER_DOC = 3
 SNIPPET_CHARS = 110
 TITLE_WEIGHT = 8  # 标题/文件名命中是强信号，实测 3 → 8 把 hit@1 从 13/18 拉到 15/18
+DESC_WEIGHT = 3  # description/别名命中给中间权重：实测用 TITLE_WEIGHT 会把宽泛描述顶成误伤
+ALIAS_BONUS = 1000.0  # 查询里出现声明过的别名 → 直接置顶，不参与比例截断
 EXACT_BONUS_TITLE = 1.0
 EXACT_BONUS_BODY = 0.5
 MIN_RATIO_OF_TOP = 0.30
@@ -82,9 +86,11 @@ def slug_of(rel):
 
 
 def detect_stale(kb_root, cards_dir):
-    """卡片缺失或比源文档旧 → 返回计数。查询前自检，避免拿旧摘要作答。"""
+    """卡片缺失、比源文档旧、或格式版本不符 → 返回计数。查询前自检，避免拿旧摘要作答。"""
     missing = 0
     stale = 0
+    if read_version(cards_dir) != CARD_VERSION:
+        return 0, 1
     for rel, full in iter_docs(kb_root):
         card = os.path.join(cards_dir, slug_of(rel) + ".md")
         try:
@@ -163,9 +169,12 @@ def load_cards(kb_root):
         meta, body = frontmatter(text)
         doc = meta.get("doc") or name[:-3]
         title = meta.get("title") or name[:-3]
+        desc = " ".join((meta.get("desc") or "").split()).lower()
         cards.append({
             "doc": doc,
             "title": title,
+            "desc": desc,
+            "aliases": parse_aliases(meta.get("alias")),
             "head": (title + " " + os.path.basename(doc)[:-3]).lower(),
             "body": body.lower(),
             "raw_body": body,
@@ -179,11 +188,71 @@ def idf_table(cards, terms):
     for t in terms:
         df = 0
         for c in cards:
-            if t in c["head"] or t in c["body"]:
+            if t in c["head"] or t in c["body"] or (c["desc"] and t in c["desc"]):
                 df += 1
         if df:  # df=0 的词谁也命中不了，直接跳过
             table[t] = math.log(1 + (n - df + 0.5) / (df + 0.5))
     return table
+
+
+def read_aliases(text):
+    """别名取多种写法：aliases: a, b / aliases: [a, b] / YAML 多行 - a 换 - b。
+    项目页一直用多行列表，只认单行会把已有别名全部读丢。"""
+    m = re.search(r"^aliases:[ \t]*(.*)$", text, re.M)
+    if not m:
+        return []
+    rest = m.group(1).strip()
+    if rest and rest not in ("|", ">"):
+        return [x.strip().strip("'\"") for x in re.split(r"[,、]", rest.strip("[]")) if x.strip()]
+    out = []
+    for line in text[m.end():].split("\n"):
+        if not line.strip():
+            continue
+        mm = re.match(r"^[ \t]+-[ \t]*(.+)$", line)
+        if mm:
+            out.append(mm.group(1).strip().strip("'\""))
+            continue
+        break
+    return out
+
+
+def parse_aliases(raw):
+    """把 frontmatter 的 aliases 拆成列表，兼容 [a, b] / a, b / a、b。"""
+    if not raw:
+        return []
+    out = []
+    for piece in re.split(r"[,、;；]", str(raw).strip().strip("[]")):
+        name = piece.strip().strip("'\"")
+        if name:
+            out.append(name)
+    return out
+
+
+def read_version(cards_dir):
+    """读卡片格式版本；缺失或读不懂都当 0（触发一次整库重建）。
+    版本文件在 cards/ 的父目录，cards/ 里只有卡片。"""
+    try:
+        with open(os.path.join(os.path.dirname(cards_dir), VERSION_FILE), encoding="utf-8") as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def norm_name(text):
+    """别名/查询归一化：去空白与常见标点，只保留可比较的字符。"""
+    return re.sub(r"[\s，。、；：！？,.;:!?（）()\[\]\"'“”‘’]", "", str(text or "").lower())
+
+
+def alias_hit(aliases, query):
+    """查询里出现了声明过的别名（整串包含即算，别名是精确词表不是同义词）。"""
+    nq = norm_name(query)
+    if not nq:
+        return False
+    for name in aliases or []:
+        n = norm_name(name)
+        if n and (nq == n or n in nq):
+            return True
+    return False
 
 
 def term_matcher(term):
@@ -194,15 +263,17 @@ def term_matcher(term):
     return (lambda text: text.count(term), lambda text: term in text)
 
 
-def score_cards(cards, terms, query):
+def score_cards(cards, terms, query, table=None):
     """BM25 累加：部分命中也能拿到分，稀有词不会把其它文档压成 0。
 
     不做「除以理论最大分」的归一化——整句提问里只要有一个只在单篇出现的片段，
     分母就会暴涨，导致其余文档全被阈值砍掉（旧实现的坑）。
     """
-    table = idf_table(cards, terms)
+    if table is None:
+        table = idf_table(cards, terms)
     if not table:
-        return []
+        # 一个词都没落库时仍要认别名：查询用的俗称可能整库一次都没出现过
+        return [(ALIAS_BONUS, c, []) for c in cards if alias_hit(c["aliases"], query)]
     avgdl = max(1, sum(len(c["body"]) for c in cards) // max(1, len(cards)))
     q = " ".join(query.lower().split())
     matchers = {t: term_matcher(t) for t in table}
@@ -220,18 +291,63 @@ def score_cards(cards, terms, query):
             if contains(c["head"]):
                 s += w * TITLE_WEIGHT
                 hit_terms.append(t)
-        if s <= 0:
+            elif c["desc"] and contains(c["desc"]):
+                s += w * DESC_WEIGHT
+                hit_terms.append(t)
+        if s <= 0 and not alias_hit(c["aliases"], query):
             continue
         if q and q in c["head"]:
             s += EXACT_BONUS_TITLE * 10
         elif q and q in c["body"]:
             s += EXACT_BONUS_BODY * 10
         scored.append((s, c, hit_terms))
-    scored.sort(key=lambda row: -row[0])
+    # 别名命中的卡片置顶，且不受比例截断（gbrain 的 alias hop 语义：声明过的名字必须能召回到）
+    scored.sort(key=lambda row: (0 if alias_hit(row[1]["aliases"], query) else 1, -row[0]))
     if not scored:
         return []
     floor = max(scored[0][0] * MIN_RATIO_OF_TOP, MIN_SCORE)
-    return [row for row in scored if row[0] >= floor]
+    return [row for row in scored if row[0] >= floor or alias_hit(row[1]["aliases"], query)]
+
+
+def evidence_of(card, query):
+    """这条结果凭什么被召回，供 --explain 和置信判断使用。"""
+    if alias_hit(card["aliases"], query):
+        return "alias_hit"
+    q = " ".join(query.lower().split())
+    if q and q in card["head"]:
+        return "exact_title"
+    if card["desc"] and q and q in card["desc"]:
+        return "desc_match"
+    if q and q in card["body"]:
+        return "exact_body"
+    return "keyword"
+
+
+def grade_hits(rows, sec, query):
+    """给本次检索定置信：strong / moderate / weak / none。
+
+    借 gbrain 的 CRAG 分级思路，纯计算、零模型调用：
+    覆盖率只数「辅助词」（bigram / 关键词）在库里的命中比例——分母用查询的
+    全部辅助词，不是能匹配的词，否则「量子纠缠的贝尔不等式」这种整句里只剩
+    一个「不等」，1/1 会被误判成高置信。
+    """
+    if not rows:
+        return "none", ""
+    top = rows[0]
+    if alias_hit(top[1]["aliases"], query) or evidence_of(top[1], query) == "exact_title":
+        return "strong", "别名或标题精确命中"
+    if not sec:
+        # 单字/超短查询没有辅助词：词面直接命中就算可信
+        return ("strong", "短查询词面命中") if top[2] else ("weak", "无词面命中")
+    denom = len(sec)
+    hit = sorted(set(top[2]) & set(sec))
+    cov = len(hit) / denom
+    detail = "命中 %d/%d 个词%s" % (len(hit), denom, ("（%s）" % "、".join(hit)) if hit else "")
+    if cov >= 0.5:
+        return "strong", detail
+    if cov >= 0.34:
+        return "moderate", detail
+    return "weak", detail
 
 
 def snippets(path, terms, kb_root):
@@ -283,6 +399,7 @@ def load_memories(kb_root):
                 items.append({
                     "rel": os.path.relpath(full, kb_root),
                     "desc": desc,
+                    "aliases": read_aliases(text[:2048]),
                     "body": text.lower(),
                     "raw": text,
                 })
@@ -301,7 +418,8 @@ def memory_hits(kb_root, query, limit=5):
         if df:
             table[t] = math.log((n + 1) / (df + 0.5))
     if not table:
-        return []
+        hit = [it for it in items if alias_hit(it.get("aliases"), query)]
+        return [it for _, it in sorted(((ALIAS_BONUS, it) for it in hit), key=lambda p: -p[0])][:limit]
     total = sum(table.get(t, 0) for t in prim + sec)
     scored = []
     for it in items:
@@ -315,16 +433,17 @@ def memory_hits(kb_root, query, limit=5):
                     primary_hit = True
                 else:
                     sec_hits += 1
-        if s <= 0:
+        hit_alias = alias_hit(it.get("aliases"), query)
+        if s <= 0 and not hit_alias:
             continue
         # 只命中 bigram 的记忆要有足够覆盖才算相关，挡住「纠缠」这种单词巧合
-        if primary_hit or (len(sec) >= 2 and sec_hits >= 2):
-            scored.append((s, it))
+        if hit_alias or primary_hit or (len(sec) >= 2 and sec_hits >= 2):
+            scored.append((s + (ALIAS_BONUS if hit_alias else 0), it))
     if not scored:
         return []
     scored.sort(key=lambda pair: -pair[0])
     floor = max(scored[0][0] * 0.35, total * 0.15)
-    return [it for s, it in scored if s >= floor][:limit]
+    return [it for s, it in scored if s >= floor or alias_hit(it.get("aliases"), query)][:limit]
 
 
 def rebuild_cards(kb_root):
@@ -367,19 +486,37 @@ def main(argv):
             rebuild_cards(kb_root)
             print("# 卡片已自动更新（%s）" % "，".join(parts), file=sys.stderr)
 
-    terms = make_terms(query)
+    prim, sec = split_query(query)
+    terms = prim + sec
     cards = load_cards(kb_root)
-    rows = score_cards(cards, terms, query)[:limit]
+    table = idf_table(cards, terms)
+    rows = score_cards(cards, terms, query, table)[:limit]
     memories = memory_hits(kb_root, query)
+    explain = "--explain" in argv
 
     if not rows and not memories:
-        print("未命中：%s" % query)
+        # 未命中分型：分清「库里没有」和「有词但没达阈值」，别让空结果冒充结论
+        if not table:
+            print("未命中：查询里的词在知识库里都没出现过——这个主题多半没入库")
+        else:
+            seen = "、".join(list(table)[:6])
+            print("未命中：%d 个词在库中出现过（%s），但没有一篇达到相关阈值" % (len(table), seen))
         return 0
     if rows:
+        level, detail = grade_hits(rows, sec, query)
         print("命中 %d 篇（关键词：%s）" % (len(rows), query))
+        if level == "weak":
+            print("⚠ 低置信：%s——可能只是字面巧合，别直接当答案" % detail)
+            if memories:
+                print("   下面「相关记忆」里的条目可能更贴近，优先看那里。")
+        elif explain:
+            print("置信：%s（%s）" % (level, detail))
     for idx, (score, card, hit_terms) in enumerate(rows, 1):
         print("")
         print("%d. %s" % (idx, card["doc"]))
+        if explain:
+            print("   证据：%s  分数：%.1f  命中词：%s"
+                  % (evidence_of(card, query), score, "、".join(sorted(set(hit_terms))) or "无"))
         if card["title"] and card["title"] not in card["doc"]:
             print("   标题：%s" % card["title"])
         summary = ""
