@@ -264,7 +264,7 @@ export function memoryIndexText({
     const body = stripIndexPreamble(file.text)
     const cut = truncateIndex(markActiveLines(body, activeNotes), maxLines, maxBytes)
     parts.push(
-      `### ${label}\n` +
+      `### ${label} · ${rel(kbRoot, path)}\n` +
       (note === '' ? '' : note + '\n') +
       cut.text +
       (cut.cut ? '\n（索引超过注入上限，已截断；先压缩索引再追加）' : ''),
@@ -279,6 +279,12 @@ export function memoryIndexText({
     const memoryDir = join(kbRoot, 'projects', project.id, 'memory')
     actives = findActiveNotes(memoryDir, cache)
     read(join(memoryDir, 'MEMORY.md'), `项目记忆 ${project.id}`, actives)
+    // 父项目（monorepo 外壳）只放跨子项目决策，对当前子项目仍然生效，所以也注入正文。
+    // 子项目拆分后父库条目很少（本项目 7 条），成本可接受；不注入等于让跨插件约束永久失效。
+    const parent = parentProjectFor(project, entries)
+    if (parent !== undefined) {
+      read(join(kbRoot, 'projects', parent.id, 'memory', 'MEMORY.md'), `父项目记忆 ${parent.id}`)
+    }
   }
   read(
     join(kbRoot, 'memory', 'MEMORY.md'),
@@ -321,6 +327,27 @@ export function stripIndexPreamble(text) {
     break
   }
   return lines.slice(i).join('\n')
+}
+
+/**
+ * 当前项目的父项目：paths.yaml 里路径是当前项目根的严格前缀，取最长的那个。
+ * 用于 monorepo：子项目命中时，父库的「跨子项目决策」也要注入。
+ */
+export function parentProjectFor(project, entries) {
+  if (project === undefined || typeof project.root !== 'string') return undefined
+  let best
+  let bestLen = -1
+  for (const entry of entries) {
+    if (entry.id === project.id) continue
+    const root = resolve(entry.path)
+    if (root === project.root) continue
+    if (!project.root.startsWith(root + sep)) continue
+    if (root.length > bestLen) {
+      best = entry
+      bestLen = root.length
+    }
+  }
+  return best
 }
 
 /** paths.yaml 的缓存读取（项目清单与当前项目都靠它）。 */

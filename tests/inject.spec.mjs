@@ -9,6 +9,7 @@ import {
   markActiveLines,
   conceptKeywords,
   memoryIndexText,
+  parentProjectFor,
   parsePathsYaml,
   projectForPath,
   relatedDocTopics,
@@ -187,9 +188,41 @@ check('概念关键词只取短句', keywords.join() === '登录改版', keyword
 check('地图显示已收录', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('已收录：登录改版'), '')
 check('conceptKeywords 无项目页返回空', conceptKeywords(root, 'nope').length === 0)
 
+// ---- 父项目（monorepo 外壳）：子项目命中时父库的跨子项目决策也要注入 ----
+const parentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-parent-'))
+const parentDir = path.join(parentRoot, '..', 'kb-parent-root')
+const childDir = path.join(parentDir, 'child')
+fs.mkdirSync(childDir, { recursive: true })
+const write2 = (rel, text) => {
+  const abs = path.join(parentRoot, rel)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, text)
+}
+write2('paths.yaml', [
+  'parent:',
+  '  path: ' + parentDir,
+  '  git_remote: none',
+  'child:',
+  '  path: ' + childDir,
+  '  git_remote: none',
+].join('\n'))
+write2('projects/parent/memory/MEMORY.md', '# 父\n- [跨插件约束](x.md) — 父库决策\n')
+write2('projects/child/memory/MEMORY.md', '# 子\n- [子项目结论](y.md) — 子库决策\n')
+const memChild = memoryIndexText({ kbRoot: parentRoot, cwd: path.join(childDir, 'src') })
+check('子项目命中注入子记忆', memChild.includes('项目记忆 child'), memChild.slice(0, 120))
+check('同时注入父项目记忆', memChild.includes('父项目记忆 parent') && memChild.includes('跨插件约束'), memChild.slice(0, 200))
+check('段标题带索引路径', memChild.includes('· projects/child/memory/MEMORY.md') && memChild.includes('· projects/parent/memory/MEMORY.md'), memChild.slice(0, 160))
+const memParent = memoryIndexText({ kbRoot: parentRoot, cwd: parentDir })
+check('父目录会话不重复注入父项目段', !memParent.includes('父项目记忆'), memParent.slice(0, 120))
+const parentEntries = parsePathsYaml(fs.readFileSync(path.join(parentRoot, 'paths.yaml'), 'utf8'))
+check('parentProjectFor 取最长前缀', parentProjectFor(projectForPath(childDir, parentEntries), parentEntries)?.id === 'parent')
+check('根项目没有父项目', parentProjectFor(projectForPath(parentDir, parentEntries), parentEntries) === undefined)
+
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
 fs.rmSync(root, { recursive: true, force: true })
+fs.rmSync(parentRoot, { recursive: true, force: true })
+fs.rmSync(parentDir, { recursive: true, force: true })
 fs.rmSync(projectDir, { recursive: true, force: true })
 fs.rmSync(noPaths, { recursive: true, force: true })
 fs.rmSync(mono, { recursive: true, force: true })
