@@ -12,7 +12,7 @@ import { apply } from '../index.js'
 // 硬闸：grep/rg 内容搜索打 / 或 home，且本 agent 从未查过 KB → deny 一次。
 // 其余全放行：web、find、codegraph、read 任意路径、home 一级目录、workdir 定点。
 // 提醒（post-execute additionalContexts）：记忆未读 / 认知后全盘搜索 / web 首搜；
-// 每类每任务 1 次，且全会话上限 2 次（防长会话刷屏）。
+// 每类每任务 1 次，且全会话上限 3 次（防长会话刷屏，同时保留后续任务不失忆）。
 const KB_ROOT = '/tmp/fake-kb'
 const HOME = homedir()
 
@@ -103,7 +103,9 @@ check('a4 只查 docs 仍触发记忆提醒', await (async () => {
 await userTurn(a2)
 check('用户新消息后记忆提醒重新武装', hasReminder(await runPost('read', { file_path: '/etc/hosts' }, a2)), true)
 await userTurn(a2)
-check('会话内第 3 次不再提醒（上限 2）', hasReminder(await runPost('read', { file_path: '/etc/hosts' }, a2)), false)
+check('会话内第 3 次仍提醒', hasReminder(await runPost('read', { file_path: '/etc/hosts' }, a2)), true)
+await userTurn(a2)
+check('会话内第 4 次不再提醒（上限 3）', hasReminder(await runPost('read', { file_path: '/etc/hosts' }, a2)), false)
 await userTurn(a2)
 await userTurn(a2)
 check('换任务也压不住上限', hasReminder(await runPost('read', { file_path: '/etc/hosts' }, a2)), false)

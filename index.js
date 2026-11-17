@@ -1394,7 +1394,9 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
     // 检索提示：kb-search 带置信分级（弱结果会告警），比裸 grep 可靠；
     // 脚本缺失时回落成"限定项目目录 + 排除 archive"的 grep，不再教整库 grep。
     const kbSearchScript = (() => {
-      const candidates = [join(resolveDshHome(), 'skills', 'local-kb', 'tools', 'kb-search.py')]
+      // 只有包内这一条路径：旧安装副本（$DSH_HOME/skills/local-kb）已由 migrate.js 清理，
+      // 再回落到它只会掩盖安装问题。
+      const candidates = []
       try {
         candidates.push(fileURLToPath(new URL('./skills/local-kb/tools/kb-search.py', import.meta.url)))
       } catch {}
@@ -1417,17 +1419,35 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         kbGrep + '；确认库里确实没有，再全盘搜索，搜完把结论补进知识库（下次不用再扫）。',
       // 索引通常已由插件注入；提醒只在「没看到注入内容」时有意义。
       memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：' +
-        '上下文里已有「记忆索引（插件每轮注入）」就直接用；没看到时 read ' + kbRoot + '/memory/MEMORY.md' +
-        '（提项目再读 projects/<id>/memory/MEMORY.md）。不涉及记忆可忽略本提示。',
+        '上下文里已有「项目记忆 / 父项目记忆 / 全局记忆」三段索引就直接用；' +
+        '真的缺了才 read ' + kbRoot + '/projects/<id>/memory/MEMORY.md 或 ' + kbRoot + '/memory/MEMORY.md。' +
+        '不涉及记忆可忽略本提示。',
       web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
     }
-    const summaryOf = { global: '提示：本地检索优先用知识库', memory: '记忆先行：先读 KB memory/MEMORY.md', web: '提示：本地问题先查知识库' }
-    /** 同一类提醒全会话最多 2 次：留一次「换任务后还记得」，挡住反复刷屏。 */
-    const MAX_REMINDERS_PER_SESSION = 2
+    const summaryOf = { global: '提示：本地检索优先用知识库', memory: '记忆先行：用注入的三段记忆索引', web: '提示：本地问题先查知识库' }
+    /** 同一类提醒全会话最多 3 次（每轮最多 1 次，靠 agent/pre-step 重置 reminded）。
+     *  长会话里前几个任务就用完额度会静默失忆，所以留 3 次给后续任务。 */
+    const MAX_REMINDERS_PER_SESSION = 3
     const mayRemind = (st, kind) => !st.reminded[kind] && (st.sent[kind] ?? 0) < MAX_REMINDERS_PER_SESSION
     const noteRemind = (st, kind) => {
       st.reminded[kind] = true
       st.sent[kind] = (st.sent[kind] ?? 0) + 1
+    }
+    /** 记忆索引本身已每步注入：注入正常时这条提醒是冗余的，只在读不到索引时才补。 */
+    const memoryReminderCache = new Map()
+    // 用会话 cwd（workingDirectory 服务）判断，而不是插件进程的 cwd：两者在多工作区下不同。
+    const memoryIndexInjected = (agent) => {
+      try {
+        return memoryIndexText({
+          kbRoot,
+          cwd: sessionCwd({ agent }) ?? process.cwd(),
+          cache: memoryReminderCache,
+          maxLines: DEFAULT_INDEX_MAX_LINES,
+          maxBytes: DEFAULT_INDEX_MAX_BYTES,
+        }).length > 0
+      } catch {
+        return false
+      }
     }
     const makeReminder = async (text, summary) => {
       const create = await reminderFactory
@@ -1449,7 +1469,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
             return {
               kind: 'deny',
               reason: '先查知识库：' + kbGrep + ' 或 read KB 内文件；KB 未命中再全盘搜索' +
-                (st && !st.memoryChecked ? '。涉及记忆先 read ' + kbRoot + '/memory/MEMORY.md' : '') +
+                (st && !st.memoryChecked ? '。涉及记忆先看注入的三段记忆索引（缺了才 read ' + kbRoot + '/projects/<id>/memory/MEMORY.md' : '') +
                 '。本会话查过 KB 后放行',
             }
           }
@@ -1482,7 +1502,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         } else if (tool === 'bash') {
           const cmd = typeof args?.command === 'string' ? args.command : ''
           if (!touchesKb(cmd) && cmd.length <= MAX_CMD) {
-            if (!st.memoryChecked && mayRemind(st, 'memory') && /\b(grep|rg|find)\b/.test(cmd)) {
+            if (!st.memoryChecked && !memoryIndexInjected(exec.agent) && mayRemind(st, 'memory') && /\b(grep|rg|find)\b/.test(cmd)) {
               reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); noteRemind(st, 'memory')
             } else if (st.kbChecked && isGlobalSearch(cmd, args) && mayRemind(st, 'global')) {
               reminder = await makeReminder(reminderTexts.global, summaryOf.global); noteRemind(st, 'global')
@@ -1490,7 +1510,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
           }
         } else if (tool === 'read') {
           const p = typeof args?.file_path === 'string' ? args.file_path : ''
-          if (!touchesKb(p) && !st.memoryChecked && mayRemind(st, 'memory')) {
+          if (!touchesKb(p) && !st.memoryChecked && !memoryIndexInjected(exec.agent) && mayRemind(st, 'memory')) {
             reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); noteRemind(st, 'memory')
           }
         }
