@@ -2,6 +2,11 @@
 
 ## 未发布
 
+- **项目命名规则**：`project_id` 取「能保证唯一的最短路径后缀」（各段 kebab 化，多段用 `-` 连接，中文原样）。
+  新增 `kb-move-project.py`：`--scan/--from-path` 生成计划、`--apply --plan` 执行，一次性更新
+  paths.yaml、`projects/<id>/` 目录、项目页 frontmatter、全库引用与卡片，执行前自动备份。
+  `kb-check` 新增三条 error：id 重复、id 与规则推导值不符、同目录名冲突未消解。
+  地图在 id 与目录名不一致时补显目录名：`diplay-privacy（DiPlay-work）`。
 - **子项目粒度**：项目按 `paths.yaml` 最长前缀匹配，子项目（monorepo 子包）各自登记与建库；
   注入时「本子项目记忆 + 父项目记忆（跨子项目决策）+ 全局记忆」三段，段标题恢复索引路径
   （`### 项目记忆 <id> · projects/<id>/memory/MEMORY.md`）。新增 `parentProjectFor()` 与 6 条断言。

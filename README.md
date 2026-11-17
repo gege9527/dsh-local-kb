@@ -71,6 +71,23 @@
 进入子项目目录时只注入该子项目的记忆，同时注入**父项目记忆**（跨子项目决策）与全局记忆；
 父项目页只放跨子项目的事，单个子项目的结论写到它自己的库里。
 
+### 项目命名
+
+`project_id` 取**能保证唯一的最短路径后缀**：各段 kebab 化，多段用 `-` 连接。
+
+- 目录名唯一 → 就是目录名（`ad-manager`）
+- 同名目录 → 逐级加父目录名（`work-api`、`apps-api`）
+- 中文目录原样保留（`不良事件管理`）
+
+项目移动或改名后，跑一次同步工具，别只手改 `paths.yaml`：
+
+```bash
+python3 skills/local-kb/tools/kb-move-project.py ~/.local-kb --from-path <旧> --to-path <新> --plan /tmp/move.json
+python3 skills/local-kb/tools/kb-move-project.py ~/.local-kb --apply --plan /tmp/move.json
+```
+
+它会更新 path 与 id、改 `projects/<id>/` 目录与项目页、替换全库引用、prune 卡片、跑 kb-check；执行前自动备份。
+
 ## 配置
 
 写进 profile 的 `cordis.patch.yml`：
