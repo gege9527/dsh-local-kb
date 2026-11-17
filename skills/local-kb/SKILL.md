@@ -103,6 +103,7 @@ description: >-
 | 代码定位（"X 功能在哪 / 怎么实现"） | 先 grep KB → 再 grep 源码 → 读文件确认行号 |
 | 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
 | **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]`；带 `--fix` 预览补索引，加 `--write` 落盘 |
+| **项目移动 / 改名** | 先 `kb-move-project.py <KB_ROOT> --from-path 旧 --to-path 新 --plan /tmp/p.json`，再 `--apply --plan /tmp/p.json`（自动备份 + 改 id/目录/引用） |
 
 技能不安装、不探测、不依赖任何第三方工具。AI 若有更强的检索能力可自行使用，
 但技能流程必须能在纯文件系统下完成。

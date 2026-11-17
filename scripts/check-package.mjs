@@ -36,6 +36,7 @@ const REQUIRED_SKILL_FILES = [
   'skills/local-kb/tools/kb-search.py',
   'skills/local-kb/tools/kb-check.py',
   'skills/local-kb/tools/kb-card.py',
+  'skills/local-kb/tools/kb-move-project.py',
 ]
 for (const rel of REQUIRED_SKILL_FILES) {
   if (!exists(rel)) {

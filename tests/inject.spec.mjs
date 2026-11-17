@@ -57,6 +57,8 @@ const check = (name, ok, detail = '') => {
 // paths.yaml 解析
 const entries = parsePathsYaml(fs.readFileSync(path.join(root, 'paths.yaml'), 'utf8'))
 check('paths 解析出 2 条', entries.length === 2, JSON.stringify(entries))
+const cjk = parsePathsYaml('不良事件管理:\n  path: /tmp/不良事件管理\n  git_remote: none\n')
+check('中文 id 也能解析', cjk.length === 1 && cjk[0].id === '不良事件管理', JSON.stringify(cjk))
 check('注释与 git_remote 被忽略', entries[0].id === 'demo' && entries[0].path === projectDir)
 
 // 项目匹配（最长前缀）
@@ -187,6 +189,10 @@ const keywords = conceptKeywords(root, 'demo')
 check('概念关键词只取短句', keywords.join() === '登录改版', keywords.join())
 check('地图显示已收录', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('已收录：登录改版'), '')
 check('conceptKeywords 无项目页返回空', conceptKeywords(root, 'nope').length === 0)
+
+// id 与磁盘目录名不一致时，地图要补出目录名（移动过 / 历史命名的项目）
+check('id 与目录名不一致时地图补目录名', map.includes('demo（kb-inject-proj）'), map.slice(0, 200))
+check('id 与目录名一致时不加括号', !map.includes('other（other）'), map.slice(0, 200))
 
 // ---- 父项目（monorepo 外壳）：子项目命中时父库的跨子项目决策也要注入 ----
 const parentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-parent-'))

@@ -114,7 +114,40 @@ check('## completed 段里的 completed 不报', !p3.some((e) => e.includes('rea
 // 6. type 分组的索引不触发 status 分组校验（opt-in）
 check('type 分组索引不做 status 校验', !errorsOf('p1').some((e) => e.includes('索引 ##')), errorsOf('p1').join(' | '))
 
+// 7. 命名规则：id 必须等于「最短唯一路径后缀」，且不得重复
+const kb2 = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-check-move-'))
+const w2 = (rel, text) => {
+  const abs = path.join(kb2, rel)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, text)
+}
+const dirA = path.join(kb2, '..', 'kb-check-name-alpha')
+const dirB = path.join(kb2, '..', 'kb-check-name-beta')
+fs.mkdirSync(dirA, { recursive: true })
+fs.mkdirSync(dirB, { recursive: true })
+w2('paths.yaml', [
+  'good:',
+  '  path: ' + path.join(kb2, '..', 'good'),
+  '  git_remote: none',
+  'wrong-name:',
+  '  path: ' + dirA,
+  '  git_remote: none',
+  'dup:',
+  '  path: ' + dirB,
+  '  git_remote: none',
+  'dup:',
+  '  path: ' + path.join(kb2, '..', 'dup2'),
+  '  git_remote: none',
+].join('\n'))
+const parsed2 = JSON.parse(spawnSync(py, [tool, kb2, '--json'], { encoding: 'utf8' }).stdout)
+check('id 与路径不符报错', parsed2.errors.some((e) => e.includes('项目 id 与路径不符') && e.includes('wrong-name')), parsed2.errors.join(' | '))
+check('id 重复报错', parsed2.errors.some((e) => e.includes('项目 id 重复') && e.includes('dup')), parsed2.errors.join(' | '))
+check('符合规则的条目不再报', !parsed2.errors.some((e) => e.includes('good→')), parsed2.errors.join(' | '))
+
 const failed = results.filter((ok) => !ok).length
 console.log('\n---- ' + (results.length - failed) + ' passed, ' + failed + ' failed ----')
+fs.rmSync(kb2, { recursive: true, force: true })
+fs.rmSync(dirA, { recursive: true, force: true })
+fs.rmSync(dirB, { recursive: true, force: true })
 fs.rmSync(kb, { recursive: true, force: true })
 if (failed > 0) process.exitCode = 1

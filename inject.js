@@ -12,7 +12,7 @@
  * 一次 step 的代价是几次 stat，不是几次 readFile。
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
@@ -110,7 +110,8 @@ export function parsePathsYaml(text) {
   for (const raw of String(text).split('\n')) {
     const line = raw.replace(/\s+$/, '')
     if (line === '' || line.startsWith('#')) continue
-    const head = line.match(/^([A-Za-z0-9_.-]+):\s*$/)
+    // id 允许中文（目录名原样保留），所以不能只认 ASCII
+    const head = line.match(/^([A-Za-z0-9_.\u4e00-\u9fff-]+):\s*$/)
     if (head) {
       current = { id: head[1], path: undefined }
       out.push(current)
@@ -494,6 +495,12 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
 
   // 父子关系按「路径的直接父目录」判定，不靠 id 前缀（oa-ai-web 这类会被误判）。
   const byPath = new Map(entries.map((entry) => [resolve(entry.path), entry]))
+  const byId = new Map(entries.map((entry) => [entry.id, entry]))
+  // id 与磁盘目录名不一致时补上目录名：移动过或历史命名的项目，光看 id 推不出目录。
+  const withDir = (id) => {
+    const base = byId.get(id)?.path === undefined ? undefined : basename(byId.get(id).path)
+    return base !== undefined && base !== id ? `${id}（${base}）` : id
+  }
   const childrenOf = new Map()
   const allChildren = new Set()
   for (const entry of entries) {
@@ -514,7 +521,7 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
   const ids = []
   for (const id of dirs) {
     if (hidden.has(id)) continue
-    ids.push(folded.has(id) ? `${id}（子：${folded.get(id).join('、')}）` : id)
+    ids.push(folded.has(id) ? `${id}（子：${folded.get(id).join('、')}）` : withDir(id))
   }
   const shown = ids.slice(0, MAP_MAX_PROJECTS)
 

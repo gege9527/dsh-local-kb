@@ -7,12 +7,27 @@
 ## 步骤 1 — 路径与 ID
 
 - 确定本机绝对路径 `<path>`（必须存在）。
-- 确定稳定 `project_id`：kebab-case（英文/拼音/ASCII），优先 `package.json` 的 `name`，否则目录名。
+- 确定 `project_id`：**取能保证唯一的最短路径后缀**——各段 kebab 化（小写、空格与符号转 `-`、中文原样保留），
+  多段用 `-` 连接。目录名唯一时就是目录名本身；同名目录时逐级加上父目录名，直到唯一。
+  例：`/work/api` 与 `/apps/api` → `work-api`、`apps-api`；`/OA-AI/excel-form-designer` → `excel-form-designer`。
 - 查 `<KB_ROOT>/paths.yaml`：ID 已存在 → 属 refresh；不存在 → 新增映射。
 - 记录 git_remote：`git -C <path> remote get-url origin`，无则 `none`。
 - **先查重，再新建**：`paths.yaml` 里已有同路径、或同 `git_remote` 的条目 → 是同一个项目，
   走「刷新」不新建。同一目录下的子项目（worktree / monorepo 子包）各自建档，
   但要在项目页写清父子关系与共享目录。
+
+## 项目移动 / 改名
+
+项目换位置或目录改名后，id 必须按新位置重算，并且一次性同步知识库里的一切：
+
+```bash
+python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --from-path <旧路径> --to-path <新路径> --plan /tmp/kb-move.json
+python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb-move.json
+```
+
+工具会更新 `paths.yaml` 的 path 与 id、改 `projects/<id>/` 目录与项目页文件名、改项目页 frontmatter、
+替换全库 `projects/<旧 id>/` 引用、prune 卡片并跑一次 kb-check；执行前自动备份到 `<KB_ROOT>/.backup/`。
+**禁止只手改 `paths.yaml`**：那样 id 与目录名会漂移，kb-check 会报「项目 id 与路径不符」。
 
 ## 步骤 2 — 提取元数据
 

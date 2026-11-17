@@ -19,13 +19,14 @@
           status 分组自洽（opt-in：索引里存在 ## active / ## completed 段时才校验）
     文档  frontmatter 存在 + title（错误）；source / date_added（警告）
     项目页 存在 / 含 project_id / 无 project_path / 有资料时含「项目资料」节
-    路径  paths.yaml 条目格式
+    路径  paths.yaml 条目格式 / id 重复 / id 与「最短唯一路径后缀」规则不符
 """
 import json
 import os
 import re
 import sys
 
+CJK = r"\u4e00-\u9fff"
 TYPES = {"user", "feedback", "project", "reference"}
 STATUSES = {"active", "completed", "archived"}
 STALE = re.compile(r"待办|进行中|正在进行|正在编译|当前瓶颈|未完成|下一步")
@@ -504,13 +505,48 @@ if doc_big:
 # paths.yaml
 yp = os.path.join(KB, "paths.yaml")
 known_projects = set()
+path_entries = []
 if os.path.exists(yp):
+    cur_id = None
     for line in read(yp).splitlines():
         if re.match(r"\s+path:\s*$", line):
             errors.append("paths.yaml 有空 path 值")
-        m = re.match(r"^([A-Za-z0-9_.-]+):\s*$", line)
+        m = re.match(r"^([A-Za-z0-9_" + CJK + r"][\w" + CJK + r"-]*):\s*$", line)
         if m:
             known_projects.add(m.group(1))
+            cur_id = m.group(1)
+            continue
+        pm = re.match(r"^\s+path:\s*(.+?)\s*$", line)
+        if pm and cur_id:
+            path_entries.append((cur_id, pm.group(1).strip("'\"")))
+            cur_id = None
+
+# 命名规则：id = 能保证唯一的最短路径后缀（与 kb-move-project.py 同一条规则）
+def kebab_seg(seg):
+    s = seg.strip().lower()
+    s = re.sub(r"[\s_]+", "-", s)
+    s = re.sub(r"[^0-9a-z" + CJK + r"-]+", "-", s)
+    return re.sub(r"-+", "-", s).strip("-") or "project"
+
+if path_entries:
+    ids_only = [e[0] for e in path_entries]
+    dup_ids = sorted({i for i in ids_only if ids_only.count(i) > 1})
+    if dup_ids:
+        errors.append("paths.yaml 项目 id 重复: " + "、".join(dup_ids))
+    segs = {i: [kebab_seg(x) for x in p.split("/") if x] for i, p in path_entries}
+    wrong = []
+    for i, parts in segs.items():
+        derived = None
+        for k in range(1, len(parts) + 1):
+            suf = "-".join(parts[-k:])
+            if sum(1 for other in segs.values() if "-".join(other[-k:]) == suf) == 1:
+                derived = suf
+                break
+        if derived is not None and derived != i:
+            wrong.append("%s→%s" % (i, derived))
+    if wrong:
+        errors.append("项目 id 与路径不符 %d 个（跑 kb-move-project.py --scan 同步）: %s"
+                      % (len(wrong), "、".join(wrong[:6])))
 
 # 文档主题自描述：docs/<主题>/_topic.md 的 projects 必须已登记
 topic_total = 0
