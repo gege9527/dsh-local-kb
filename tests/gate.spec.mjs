@@ -1,4 +1,11 @@
 import { homedir } from 'node:os'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+// 隔离 $DSH_HOME：apply() 会跑旧安装迁移，绝不能落到用户真实 ~/.dsh
+process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-gate-home-'))
+
 import { apply } from '../index.js'
 
 // ---- 门禁 v2 测试矩阵（2026-10-26）：判定权归模型，插件只留唯一硬闸 + 零打断提醒 ----
@@ -16,7 +23,7 @@ const ctx = {
   inject() {},
   effect() {},
 }
-apply(ctx, { kbRoot: KB_ROOT, installSkill: false, registerSkill: false })
+apply(ctx, { kbRoot: KB_ROOT, injectContext: false })
 
 const pre = handlers['tools/pre-execute']?.[0]
 const post = handlers['tools/post-execute']?.[0]

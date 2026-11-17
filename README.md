@@ -4,6 +4,8 @@
 
 **不修改任何技能内容**：`local-kb` 技能被其他工具共用，插件只做旁路增强。
 
+完整手册（注入机制、日常使用、排障、FAQ、二次开发）见 [GUIDE.md](GUIDE.md)。
+
 ## 快速开始
 
 1. 在 DSH 插件管理里安装本插件。
@@ -11,6 +13,9 @@
 3. 点「上传到云端」建立第一份备份。
 
 默认**不会自动上传**——写知识库只改本地，什么时候推由你决定。
+
+但**体检（kb-check）是常开的**：任何写入落在 `KB_ROOT` 内，1.5 秒后都会跑一次体查并记录结果，
+与自动同步开关无关；开关只决定体检通过后要不要继续上传。
 
 ## 它做什么
 
@@ -73,8 +78,8 @@
 | `indexCap` | `true` | 是否启用索引硬上限（删除拦截不受影响） |
 | `compactionReminder` | `true` | 是否在长对话时提醒写 KB |
 | `reminderPressure` | `0.6` | 触发提醒的上下文占用比例 |
-| `installSkill` | `true` | 是否把技能副本安装到 `$DSH_HOME/skills/` |
-| `registerSkill` | `true` | 是否在运行时注册技能条目 |
+| `injectRules` | `true` | 是否每轮注入常驻规则（KB_LOCAL 那套判断规则） |
+| `migrateLegacy` | `true` | 是否清理 0.3.x 留下的技能副本与 `AGENTS.md` 常驻块 |
 
 WebDAV 相关设置（地址、账户、密码、远程根目录、自动同步）不走这里，存在
 `$DSH_HOME/local-kb/settings.json` 与 credentials，由设置页管理。
@@ -87,7 +92,8 @@ WebDAV 相关设置（地址、账户、密码、远程根目录、自动同步�
 
 ## 卸载
 
-`dsh plugin remove` 之后插件代码不再运行，没有钩子可挂，需要手动收尾一次：
+0.5.0 起技能随包加载、常驻规则走 `systemPrompt.context`，**`dsh plugin remove` 即干净**：
+技能和规则都不在 `$DSH_HOME` 里留副本。仍需手动收尾的只有凭据与插件状态：
 
 ```sh
 node install-skill.js --uninstall
@@ -95,10 +101,13 @@ node install-skill.js --uninstall
 
 | 删除 | 说明 |
 |---|---|
-| 技能副本 `$DSH_HOME/skills/local-kb/` | 是软链时只解链接，指向的共享技能库不动 |
-| `AGENTS.md` 的 `KB_LOCAL` 块 | 块外内容一行不动 |
 | WebDAV 凭据 `dsh_local_kb_webdav_*` | 删前备份到 `.credentials.yaml.local-kb-bak`（0600） |
 | 插件状态 `$DSH_HOME/local-kb/` | 设置、同步基准、覆盖前备份 |
+| 遗留技能副本 `$DSH_HOME/skills/local-kb/` | 0.3.x 老安装的产物；软链时只解链接 |
+| `AGENTS.md` 的 `KB_LOCAL` 块 | 0.3.x 老安装写进去的；块外内容一行不动 |
+
+正常启动时 `migrate.js` 已经清掉后两项（删前备份到 `$DSH_HOME/.local-kb-legacy-backup/`），
+这个命令只是兜底。
 
 **不会删**知识库目录（`$KB_ROOT`，默认 `~/.local-kb`）——那是你的数据。
 
@@ -116,13 +125,15 @@ node install-skill.js --uninstall
 ## 开发
 
 ```sh
-npm test        # 12 个测试文件，255 项
+npm test        # 18 个测试文件
 ```
 
 | 文件 | 职责 |
 |---|---|
-| `index.js` | Host 半：技能安装、注入、guard、同步、API |
-| `inject.js` | 记忆索引与知识地图的组装（同步 IO + mtime 缓存） |
-| `install-skill.js` | 技能副本安装 / 卸载 + AGENTS.md 常驻块 |
+| `index.js` | Host 半：注入、guard、同步、API |
+| `inject.js` | 记忆索引、知识地图、常驻规则的组装（同步 IO + mtime 缓存） |
+| `migrate.js` | 旧安装迁移：删技能副本（带 `.skill-version` 才删）+ 摘 `AGENTS.md` 块 |
+| `install-skill.js` | 老式安装 / 卸载工具（默认不再调用，`--uninstall` 仍可用） |
 | `client.js` | 浏览器半：设置页 |
-| `skill/` | local-kb 技能完整副本（安装源，与上游逐字节一致） |
+| `skills/local-kb/` | local-kb 技能完整副本（由 `bundledSkillDir` 直接加载，与上游逐字节一致） |
+| `scripts/check-package.mjs` | 发布前校验（`prepublishOnly`）：技能载荷、files 覆盖、patch provider 行缺一即中止 |

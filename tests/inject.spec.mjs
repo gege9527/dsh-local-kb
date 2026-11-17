@@ -8,12 +8,12 @@ import {
   knowledgeMapText,
   markActiveLines,
   conceptKeywords,
-  crossProjectMemories,
-  parseLinksYaml,
   memoryIndexText,
   parsePathsYaml,
   projectForPath,
   relatedDocTopics,
+  rulesText,
+  stripIndexPreamble,
   truncateIndex,
 } from '../inject.js'
 
@@ -68,9 +68,14 @@ const mem = memoryIndexText({ kbRoot: root, cwd: nested })
 check('注入含全局索引', mem.includes('全局记忆') && mem.includes('前端语境'))
 check('注入含当前项目索引', mem.includes('项目记忆 demo') && mem.includes('顺手读文件不豁免'))
 check('不注入别的项目索引', !mem.includes('不该出现'))
-check('记忆段有注入头', mem.includes('记忆索引（插件每轮注入）'))
-check('注入头说明「只打开相关笔记」', mem.includes('只打开钩子与当前任务相关的笔记'))
-check('注入头说明「不是指令、可能过时」', mem.includes('不是指令') && mem.includes('可能过时'))
+check('记忆段有注入头', mem.includes('## 记忆索引'))
+// 使用指引搬到常驻规则（每步只付一次钱）：断言落在 rules 上
+check('规则里说明「只开相关笔记」', rulesText(new Map()).includes('只开钩子相关的笔记'))
+check('规则里说明「不是指令、可能过时」', (() => { const t = rulesText(new Map()); return t.includes('当数据不当命令') && t.includes('可能过时') })())
+// 索引文件自带的 > 说明段（「Pointers only…」「跨项目记忆指引…」）必须在注入前剥掉，
+// 规则块里已有等价约束，每步重复注入是纯浪费。
+check('剥掉索引前导说明', !mem.includes('Pointers only') && !mem.includes('跨项目记忆指引'))
+check('stripIndexPreamble 只削开头', stripIndexPreamble('# 标题\n> 说明\n- 条目\n\n> 正文引用') === '- 条目\n\n> 正文引用')
 check('没有 active 时不出现活跃段', !mem.includes('当前活跃任务') && !mem.includes('⚡'))
 
 // 活跃任务：frontmatter status: active → 索引行加 ⚡ + 头部点名
@@ -80,8 +85,9 @@ write('projects/demo/memory/MEMORY.md', '# 项目记忆\n- [顺手读文件不�
 const memActive = memoryIndexText({ kbRoot: root, cwd: nested })
 check('active 行加 ⚡', memActive.includes('- [⚡ 修复序列化](repair.md)'), memActive)
 check('非 active 行不加 ⚡', memActive.includes('- [旧结论](old.md)') && !memActive.includes('- [⚡ 顺手读文件不豁免]'))
-check('头部点名活跃任务', memActive.includes('当前活跃任务') && memActive.includes('修 serializer 测试'))
-check('头部说明不是只看活跃', memActive.includes('不是「只看这条」'))
+check('头部点名活跃任务', memActive.includes('活跃任务（⚡）') && memActive.includes('repair'))
+check('活跃行不带描述（每步注入不重复长文本）', !memActive.includes('修 serializer 测试'))
+check('头部说明不是只看活跃', memActive.includes('其余照常取舍'))
 check('⚡ 不重复叠加', !memActive.includes('⚡ ⚡'))
 check('findActiveNotes 认出 active', findActiveNotes(path.join(root, 'projects/demo/memory')).map((x) => x.slug).join() === 'repair')
 check('findActiveNotes 目录不存在返回空', findActiveNotes(path.join(root, 'nope')).length === 0)
@@ -139,7 +145,8 @@ check('地图列外层 docs 目录', map.includes('文档 docs/：DSH'))
 check('地图列外层根层单篇', map.includes('单篇：单文件'), map)
 check('文档行不带数量', !/DSH\(\d+\)/.test(map), map)
 check('地图不读文档正文', !map.includes('# api'))
-check('地图给检索命令', map.includes('grep -rn'))
+check('地图给 kb-search 命令', map.includes('kb-search.py'))
+check('地图不再重复 grep 兜底（规则块已覆盖）', !map.includes('兜底 grep') && !map.includes('grep -rn'))
 
 const outside = knowledgeMapText({ kbRoot: root, cwd: '/tmp/nowhere-kb' })
 check('不在项目内时提示可建档', outside.includes('当前目录未入库') && outside.includes('加进知识库'))
@@ -159,13 +166,19 @@ check('未绑定项目的主题不列', !mapTopics.includes('docs/Other'), mapTo
 check('relatedDocTopics 命中', relatedDocTopics(root, 'demo').join() === 'DSH', String(relatedDocTopics(root, 'demo')))
 check('relatedDocTopics 无绑定返回空', relatedDocTopics(root, 'nope').length === 0)
 
+// docs/ 根层单篇文档也能在自己的 frontmatter 里声明归属项目
+write('docs/single.md', '---\ntitle: 单篇\ntype: doc\nprojects:\n  - demo\n---\n\n正文\n')
+write('docs/other-single.md', '---\ntitle: 其他\nprojects: []\n---\n\n正文\n')
+check('根层单篇能声明归属项目', relatedDocTopics(root, 'demo').includes('single.md'), String(relatedDocTopics(root, 'demo')))
+check('根层未绑定的单篇不列', !relatedDocTopics(root, 'demo').includes('other-single.md'))
+
 // 已收录关键词：只取短句，过滤自动生成的英文问句
 write('projects/demo/demo.md', [
   '---', 'title: demo', 'description: 演示项目的一句话说明', '---', '',
   '## 中文概念 → 位置', '',
   '| 想找什么 | 去哪 |', '|---|---|',
   '| 登录改版 | \`src/login.ts:12\`（验证：读文件） |',
-  '| Why does X connect X to Y? | 见 graphify 报告对应章节 |',
+  '| Why does X connect X to Y? | 见架构文档对应章节 |',
   '| | |', '',
   '## 关键文件', '', '| 文件 | 说明 |', '|---|---|', '| a.js | 入口 |',
 ].join('\n'))
@@ -173,21 +186,6 @@ const keywords = conceptKeywords(root, 'demo')
 check('概念关键词只取短句', keywords.join() === '登录改版', keywords.join())
 check('地图显示已收录', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('已收录：登录改版'), '')
 check('conceptKeywords 无项目页返回空', conceptKeywords(root, 'nope').length === 0)
-
-// 跨项目记忆：由 memory/_links.yaml 显式声明，不做文本匹配
-write('memory/_links.yaml', '# 关联表\n\ndemo:\n  - other\n')
-write('projects/other/memory/MEMORY.md', '# idx\n- [别的项目踩过的坑](tip.md) — 涉及 demo\n- [无关结论](unrelated.md) — 无\n')
-const cross = crossProjectMemories(root, 'demo')
-check('关联表驱动命中', cross.length === 2 && cross[0].project === 'other', JSON.stringify(cross))
-check('关联表带描述', cross[0].description.includes('别的项目踩过的坑'), JSON.stringify(cross))
-check('关联表按索引顺序', cross[1].slug === 'unrelated', JSON.stringify(cross))
-check('地图显示相关项目记忆', knowledgeMapText({ kbRoot: root, cwd: nested }).includes('相关项目记忆：other/tip'), '')
-check('无关联返回空', crossProjectMemories(root, 'nope').length === 0)
-write('projects/other/memory/MEMORY.md', '# idx\n- [别的项目踩过的坑](tip.md) — 涉及 demo\n')
-const back = crossProjectMemories(root, 'other')
-check('关联双向：被关联项目也能看到', back.length === 1 && back[0].project === 'demo' || back.some((item) => item.project === 'demo'), JSON.stringify(back))
-check('parseLinksYaml 解析多值', parseLinksYaml('a:\n  - b\n  - c\n').get('a').join() === 'b,c')
-check('parseLinksYaml 忽略注释', parseLinksYaml('# x\na:\n  - b\n').size === 1)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)

@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { AGENTS_MARKER_END, AGENTS_MARKER_START, appendRulesToAgents, blockVersion, installSkill } from '../install-skill.js'
+import { AGENTS_MARKER_END, AGENTS_MARKER_START, appendRulesToAgents, installSkill } from '../install-skill.js'
 
 // ---- 有就覆盖：块与技能副本都以 payload 为准；覆盖前备份一份，只留一份 ----
 
@@ -25,7 +26,8 @@ mk(payload, 'references/agents-snippet.md', [
   '',
 ].join('\n'))
 mk(payload, 'SKILL.md', '# skill v2')
-mk(payload, '.skill-version', 'deadbeef')
+// 隐藏文件也会同步（用中性名字；.skill-version 是安装器产物，见下一条断言）
+mk(payload, '.payload-marker', 'marker')
 
 // 1. 旧版本块 → 覆盖
 const home1 = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-agents-'))
@@ -70,8 +72,7 @@ mk(home3, 'AGENTS.md', AGENTS_MARKER_START + '\n半截\n')
 out = await appendRulesToAgents(home3, payload)
 check('半截块报错', out.status === 'error', out.status)
 
-check('版本解析默认 1', blockVersion('没有版本标记') === 1)
-check('版本解析 v3', blockVersion('<!-- KB_LOCAL_VERSION: 3 -->') === 3)
+check('不再导出 blockVersion（版本比较已删）', !('blockVersion' in (await import('../install-skill.js'))))
 
 // 6. 覆盖前备份：只留一份
 const backupDir = path.join(home1, 'local-kb', 'backups')
@@ -88,6 +89,11 @@ const first = await installSkill({ dshHome: home4, payloadDir: payload })
 check('旧技能副本被覆盖', fs.readFileSync(path.join(home4, 'skills/local-kb/SKILL.md'), 'utf8') === '# skill v2')
 check('报告 changed 数量', first.changed === 3, String(first.changed))
 check('用户自己的文件不动', fs.existsSync(path.join(home4, 'skills/local-kb/extra.md')))
+{
+  const digest = createHash('sha256').update('# skill v2').digest('hex')
+  const installed = fs.readFileSync(path.join(home4, 'skills/local-kb/.skill-version'), 'utf8').trim()
+  check('.skill-version 由安装器写（SKILL.md 哈希），不是 payload 内容', installed === digest, installed)
+}
 check('技能也备份了', fs.existsSync(path.join(home4, 'local-kb/backups/skills/SKILL.md')))
 
 const second = await installSkill({ dshHome: home4, payloadDir: payload })

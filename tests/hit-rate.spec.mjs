@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 // 旧实现（整串 trigram 匹配）在这套用例上 hit@5 只有 17%。
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const toolsDir = path.join(here, '..', 'skill', 'tools')
+const toolsDir = path.join(here, '..', 'skills', 'local-kb', 'tools')
 const py = process.env.PYTHON ?? 'python3'
 
 const results = []
@@ -126,7 +126,8 @@ const gradeCode = [
   'spec = importlib.util.spec_from_file_location("s", sys.argv[1])',
   'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
   'card = {"aliases": [], "head": "x", "desc": "", "body": "x", "doc": "x"}',
-  'print(m.grade_hits([(1.0, card, ["不等"])], ["量子", "纠缠", "不等", "贝尔"], "量子纠缠的贝尔不等式")[0])',
+  'prim, sec = m.split_query("量子纠缠的贝尔不等式")',
+  'print(m.grade_hits([(1.0, card, ["不等"])], prim, sec, "量子纠缠的贝尔不等式")[0])',
 ].join('\n')
 const gradeOut = spawnSync(py, ['-c', gradeCode, path.join(toolsDir, 'kb-search.py')], { encoding: 'utf8' })
 check('整句只剩一个巧合词判 weak', (gradeOut.stdout || '').trim() === 'weak', gradeOut.stdout + (gradeOut.stderr || ''))

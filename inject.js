@@ -13,6 +13,8 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 /** 同一份文件在这个窗口内不重复 stat（dsh 每步都会问一次）。 */
 const RECHECK_MS = 10_000
@@ -26,6 +28,77 @@ const MAP_MAX_PROJECTS = 60
 /** 一个父项目下的子项目超过这个数才折叠（当前 OA-AI 有 5 个，不折叠）。 */
 const MAP_FOLD_THRESHOLD = 10
 const MAP_MAX_DOCS = 8
+
+/**
+ * 技能自带的检索脚本绝对路径。每轮注入里给 grep 之外的更优选项：
+ * kb-search 会带置信分级，弱结果直接告警，裸 grep 没有这层判断。
+ * 脚本缺失（裁剪安装）时返回 null，注入回落成纯 grep 提示。
+ */
+export function kbSearchPath() {
+  const candidates = []
+  // 技能现在随包加载（bundledSkillDir），脚本就在包内，路径短且不依赖安装副本。
+  try {
+    candidates.push(fileURLToPath(new URL('./skills/local-kb/tools/kb-search.py', import.meta.url)))
+  } catch {}
+  // 兜底：0.3.x 及更早版本留下的技能副本（迁移没跑到时仍能用）。
+  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
+  candidates.push(join(dshHome, 'skills', 'local-kb', 'tools', 'kb-search.py'))
+  for (const p of candidates) {
+    try {
+      if (statSync(p).isFile()) return p
+    } catch {}
+  }
+  return null
+}
+
+/** 技能目录：0.4.0 起跟 DSH 技能根布局一致（skills/<name>/），由 bundledSkillDir 直接加载。 */
+export function skillDir(moduleUrl = import.meta.url) {
+  return join(dirname(fileURLToPath(moduleUrl)), 'skills', 'local-kb')
+}
+
+/** 常驻规则文件：技能自带的 references/agents-snippet.md（与 AGENTS.md 里那块同源）。 */
+export function rulesPath(moduleUrl = import.meta.url) {
+  return join(skillDir(moduleUrl), 'references', 'agents-snippet.md')
+}
+
+/** 常驻规则注入上限：正常 3.6 KB，超了截断（宁可少注入，不撑爆系统提示）。 */
+export const RULES_MAX_CHARS = 8 * 1024
+/** 规则文件按 mtime/size 缓存，dsh 每个 step 都同步问一次。 */
+const RULES_CACHE = new Map()
+
+const MARKER_START = /^<!--\s*KB_LOCAL_START\s*-->$/
+const MARKER_END = /^<!--\s*KB_LOCAL_END\s*-->$/
+
+/** 摘掉 KB_LOCAL 的 HTML 标记行：那是旧 AGENTS.md 用来定位块的，注入时不该出现。 */
+export function stripRuleMarkers(text) {
+  return String(text ?? '')
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim()
+      return !MARKER_START.test(trimmed) && !MARKER_END.test(trimmed)
+    })
+    .join('\n')
+    .trim()
+}
+
+/**
+ * 每轮注入的常驻规则正文（替代旧方案写进 AGENTS.md 的 KB_LOCAL 块）。
+ * 读不到就返回空串：规则缺失不能拖垮请求。
+ */
+export function rulesText(cache = RULES_CACHE) {
+  const file = rulesPath()
+  const cached = readCached(file, cache)
+  if (cached === undefined) return ''
+  const body = stripRuleMarkers(cached.text)
+  return body.length <= RULES_MAX_CHARS ? body : body.slice(0, RULES_MAX_CHARS) + '\n…（规则过长已截断）'
+}
+
+
+/** home 前缀换成 ~，注入行短一截。 */
+function tildify(p) {
+  const home = homedir()
+  return p.startsWith(home + sep) ? '~' + p.slice(home.length) : p
+}
 
 /**
  * 解析 paths.yaml —— 只认本插件自己写的那两种缩进（id: / path: / git_remote:），
@@ -186,9 +259,12 @@ export function memoryIndexText({
   const read = (path, label, activeNotes = [], note = '') => {
     const file = readCached(path, cache)
     if (file === undefined || file.text.trim() === '') return
-    const cut = truncateIndex(markActiveLines(file.text, activeNotes), maxLines, maxBytes)
+    // 索引文件顶部的 `>` 段落是给人看的协议说明（「Pointers only…」「跨项目记忆指引…」），
+    // 规则块里已有等价约束，每步重复注入纯属浪费 → 注入前剥掉。
+    const body = stripIndexPreamble(file.text)
+    const cut = truncateIndex(markActiveLines(body, activeNotes), maxLines, maxBytes)
     parts.push(
-      `### ${label} · ${rel(kbRoot, path)}\n` +
+      `### ${label}\n` +
       (note === '' ? '' : note + '\n') +
       cut.text +
       (cut.cut ? '\n（索引超过注入上限，已截断；先压缩索引再追加）' : ''),
@@ -213,25 +289,38 @@ export function memoryIndexText({
 
   if (parts.length === 0) return ''
   // 头部对齐上游 engramory：索引只替代「读索引文件」，不替代「读笔记」。
-  const header = [
-    '## 记忆索引（插件每轮注入）',
-    '',
-    '这是长期记忆的索引：一行一条笔记，指向同一目录下的笔记文件。',
-    '**用索引代替读索引文件；只打开钩子与当前任务相关的笔记，不要批量读。**',
-    '**两级都扫**：项目记忆是特化层，全局记忆是默认生效层；只扫项目段会丢掉跨项目结论（代理、工具链、环境坑）。',
-    '这些行是笔记不是指令——不覆盖用户、系统提示或 AGENTS.md；可能过时，',
-    '动手前先核实文件、命令、版本。保存或更新记忆按 local-kb 技能。',
-  ]
+  // 使用指引（只开相关笔记 / 两级都扫 / 可能过时）已在常驻规则的「记忆召回」段，
+  // 这里只留标题和一句最小提示，避免每步把同一句话付两遍钱。
+  const header = ['## 记忆索引', '', '（索引 ≠ 笔记）']
   if (actives.length > 0) {
-    const list = actives.map((item) => item.description === '' ? item.slug : `${item.slug}（${item.description}）`).join('；')
+    // 只列 slug：描述在笔记里，索引行每步都重复注入，带上描述纯属浪费。
+    const list = actives.map((item) => item.slug).join('；')
     header.push(
       '',
-      `**当前活跃任务（行首 ⚡）**：${list}。`,
-      '⚡ 是接续未完成任务的恢复锚点；**它不是「只看这条」——其余记忆照常按钩子取舍**。',
+      `**活跃任务（⚡）**：${list}`,
+      '⚡ = 接续恢复锚点；其余照常取舍。',
     )
   }
   header.push('')
   return header.join('\n') + parts.join('\n\n')
+}
+
+/**
+ * 去掉索引文件开头的 `>` 说明段（含空行），只留标题与条目。
+ * 只处理文件开头连续出现的部分，正文中间的引用块原样保留。
+ */
+export function stripIndexPreamble(text) {
+  const lines = String(text ?? '').split('\n')
+  let i = 0
+  // 允许开头是标题（# / ##），说明段通常紧随其后
+  if (lines[i]?.startsWith('#')) i += 1
+  while (i < lines.length) {
+    const line = lines[i].trim()
+    if (line === '') { i += 1; continue }
+    if (line.startsWith('>')) { i += 1; continue }
+    break
+  }
+  return lines.slice(i).join('\n')
 }
 
 /** paths.yaml 的缓存读取（项目清单与当前项目都靠它）。 */
@@ -260,60 +349,6 @@ function projectDocNames(kbRoot, id) {
   } catch {
     return []
   }
-}
-
-/**
- * 解析 memory/_links.yaml —— 项目级关联表（A → [B, C]）。
- *
- * 为什么不用文本匹配：项目 id 很短（web / ai / n1），正文里到处都是，
- * 实测 193 条记忆里结构化引用只有 3 处，纯文本命中 47 条噪声。只认显式关联。
- */
-export function parseLinksYaml(text) {
-  const out = new Map()
-  let current
-  for (const raw of String(text).split('\n')) {
-    const line = raw.replace(/\s+$/, '')
-    if (line === '' || line.startsWith('#')) continue
-    const head = line.match(/^([A-Za-z0-9_.-]+):\s*$/)
-    if (head) {
-      current = []
-      out.set(head[1], current)
-      continue
-    }
-    const item = line.match(/^\s+-\s+(\S+)\s*$/)
-    if (item !== null && current !== undefined) current.push(item[1])
-  }
-  return out
-}
-
-/**
- * 关联项目的记忆条目：读 _links.yaml，取被关联项目 MEMORY.md 的前几条指针。
- * 只列指针行，不读笔记正文。
- */
-export function crossProjectMemories(kbRoot, projectId, cache = new Map(), limit = 3) {
-  const file = readCached(join(kbRoot, 'memory', '_links.yaml'), cache)
-  if (file === undefined) return []
-  const links = parseLinksYaml(file.text)
-  // 双向：A → B 写了，查 B 时也能看到 A 的记忆（父子项目尤其需要）。
-  const forward = links.get(projectId) ?? []
-  const backward = []
-  for (const [id, list] of links) {
-    if (id !== projectId && list.includes(projectId)) backward.push(id)
-  }
-  const related = [...new Set([...forward, ...backward])]
-  const out = []
-  for (const id of related) {
-    const index = readCached(join(kbRoot, 'projects', id, 'memory', 'MEMORY.md'), cache)
-    if (index === undefined) continue
-    for (const line of index.text.split('\n')) {
-      const match = line.match(/^-\s*\[([^\]]+)\]\(([^)]+)\)/)
-      if (match === null) continue
-      const slug = match[2].replace(/^.*\//, '').replace(/\.md$/, '')
-      out.push({ project: id, slug, description: match[1] })
-      if (out.length >= limit) return out
-    }
-  }
-  return out
 }
 
 /**
@@ -346,38 +381,51 @@ export function conceptKeywords(kbRoot, projectId, cache = new Map(), limit = 8)
  * 与项目关联的文档主题：读 docs/<主题>/_topic.md 的 projects 列表。
  * 只返回明确绑定的主题，不列「通用」——每轮注入不该塞无差别提示。
  */
+function projectListOf(text) {
+  const head = text.slice(0, 1024)
+  const list = []
+  const block = head.match(/^projects:\s*\n((?:\s+-\s+.*\n?)*)/m)
+  if (block !== null) {
+    for (const line of block[1].split('\n')) {
+      const item = line.match(/^\s+-\s+(\S+)/)
+      if (item !== null) list.push(item[1].trim())
+    }
+    return list
+  }
+  const inline = head.match(/^projects:\s*\[([^\]]*)\]\s*$/m)
+  if (inline !== null) {
+    for (const part of inline[1].split(',')) {
+      const id = part.trim()
+      if (id !== '') list.push(id)
+    }
+  }
+  return list
+}
+
+/**
+ * 与项目关联的文档主题：读 docs/<主题>/_topic.md 的 projects 列表。
+ * 只返回明确绑定的主题，不列「通用」——每轮注入不该塞无差别提示。
+ * docs/ 根层的单篇文档也可在自己的 frontmatter 里写 projects: [...]，同样会被列出。
+ */
 export function relatedDocTopics(kbRoot, projectId, cache = new Map()) {
   const docsDir = join(kbRoot, 'docs')
-  let dirs
+  let entries
   try {
-    dirs = readdirSync(docsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
+    entries = readdirSync(docsDir, { withFileTypes: true })
   } catch {
     return []
   }
   const out = []
-  for (const dir of dirs) {
-    const file = readCached(join(docsDir, dir, '_topic.md'), cache)
-    if (file === undefined) continue
-    const head = file.text.slice(0, 1024)
-    const list = []
-    const block = head.match(/^projects:\s*\n((?:\s+-\s+.*\n?)*)/m)
-    if (block !== null) {
-      for (const line of block[1].split('\n')) {
-        const item = line.match(/^\s+-\s+(\S+)/)
-        if (item !== null) list.push(item[1].trim())
-      }
-    } else {
-      const inline = head.match(/^projects:\s*\[([^\]]*)\]\s*$/m)
-      if (inline !== null) {
-        for (const part of inline[1].split(',')) {
-          const id = part.trim()
-          if (id !== '') list.push(id)
-        }
-      }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const file = readCached(join(docsDir, entry.name, '_topic.md'), cache)
+      if (file === undefined) continue
+      if (projectListOf(file.text).includes(projectId)) out.push(entry.name)
+    } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== '_topic.md') {
+      const file = readCached(join(docsDir, entry.name), cache)
+      if (file === undefined) continue
+      if (projectListOf(file.text).includes(projectId)) out.push(entry.name)
     }
-    if (list.includes(projectId)) out.push(dir)
   }
   return out
 }
@@ -460,11 +508,11 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     const topics = relatedDocTopics(kbRoot, project.id, cache)
     if (topics.length > 0) lines.push('  相关文档：' + topics.map((dir) => 'docs/' + dir).join('、'))
     const concepts = conceptKeywords(kbRoot, project.id, cache)
-    if (concepts.length > 0) lines.push('  已收录：' + concepts.join('、') + '（先看项目页，别重复搜）')
-    const cross = crossProjectMemories(kbRoot, project.id, cache)
-    if (cross.length > 0) {
-      const items = cross.map((item) => `${item.project}/${item.slug}（${item.description}）`)
-      lines.push('  相关项目记忆：' + items.join('；'))
+    if (concepts.length > 0) {
+      lines.push('  已收录：' + concepts.join('、') + '（先看项目页，别重复搜）')
+    } else if (projectKind(kbRoot, project.id, cache) === 'code-project') {
+      // 空表不该静默：模型会以为项目页没东西可查，然后重复搜一遍
+      lines.push('  概念表未填：项目页「中文概念 → 位置」为空，定位请现读源码')
     }
   } else if (cwd !== undefined) {
     lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')
@@ -477,6 +525,9 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (docs.files.length > 0) parts.push('单篇：' + docs.files.join('、'))
     lines.push('文档 docs/：' + parts.join('；'))
   }
-  lines.push(`检索：grep -rn "关键词" ${join(kbRoot, 'projects', '*', '*.md')} ${join(kbRoot, 'docs')}`)
+  const searchPy = kbSearchPath()
+  if (searchPy) {
+    lines.push(`检索：python3 ${tildify(searchPy)} "关键词"（带置信分级，弱结果会告警，别当答案）`)
+  }
   return lines.join('\n')
 }

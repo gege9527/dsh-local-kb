@@ -10,6 +10,9 @@
 - 确定稳定 `project_id`：kebab-case（英文/拼音/ASCII），优先 `package.json` 的 `name`，否则目录名。
 - 查 `<KB_ROOT>/paths.yaml`：ID 已存在 → 属 refresh；不存在 → 新增映射。
 - 记录 git_remote：`git -C <path> remote get-url origin`，无则 `none`。
+- **先查重，再新建**：`paths.yaml` 里已有同路径、或同 `git_remote` 的条目 → 是同一个项目，
+  走「刷新」不新建。同一目录下的子项目（worktree / monorepo 子包）各自建档，
+  但要在项目页写清父子关系与共享目录。
 
 ## 步骤 2 — 提取元数据
 
@@ -52,14 +55,16 @@
 1. **项目主页**：`<KB_ROOT>/projects/<project_id>/<project_id>.md`
 2. **「中文概念 → 位置」表**是核心。写前逐条验证，**命中才写，未命中不写**（避免假位置）。
    ```bash
-   grep -rn "<概念关键词>" "<path>" --include="*.py" --include="*.js" --include="*.ts" --include="*.java"
+   grep -rn "<概念关键词>" "<path>" --include="*.py" --include="*.js" --include="*.ts" --include="*.java" \
+     --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target
    ```
    命中后**打开文件确认行号**。表内注明「验证：读文件」，供后续判断可信度。
 
    **中文线索采集（写入时必须做）**：
    - 直接搜中文注释/README 找线索：
      ```bash
-     grep -rn "[一-龥]" "<path>" --include="*.py" --include="*.js" --include="*.ts" | head -50
+     grep -rn "[一-龥]" "<path>" --include="*.py" --include="*.js" --include="*.ts" \
+       --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist | head -50
      ```
    - 补充线索来源：测试文件名（`*.test.*` 常含业务中文）、`git log --grep="中文词"`、`package.json` 依赖（用了什么框架 → 去对应文档目录找）
    - 每个中文业务词先按上文方式验证命中 → 命中才入表。
@@ -74,6 +79,9 @@
 - [ ] `git_remote`：remote 或 `none`
 - [ ] 概念→位置表每条已验证命中，且注明了「验证：读文件」
 - [ ] 关键文件表只列入口文件与 README 点名的文件，不列全量符号
+- [ ] 「这是什么」满足 `templates.md` 的下限：3–5 句，说清"解决什么问题"+ 边界（用什么 / 不用什么）
+- [ ] 「目录结构」每个一级目录带一句话职责，不是用 `·` 连名字
+- [ ] 「关键文件」有 ≥3 行；不够就删掉整节
 
 **内容边界**：不写全量符号表、不写快变字段（符号/文件数、commit、引擎版本）、不复制源码。
 
@@ -82,6 +90,7 @@
 1. `paths.yaml` 含该 `project_id`，指向路径存在。
 2. 读回笔记，概念→位置表里每个相对路径在 `<path>` 下真实存在。
 3. 笔记内普通链接指向的文件存在。
+4. 跑 `python3 <技能目录>/tools/kb-check.py`，退出码非 0 → 修完再报成功。
 
 ## 刷新（refresh <名>）
 
@@ -90,14 +99,26 @@
    **重算「项目资料」节**——重新扫描 `<KB_ROOT>/projects/<id>/docs/`、`memory/` 的实际文件，新增/移除同步更新）
 3. 校验
 
+## 完成报告
+
+汇报 **added / updated / skipped**（含理由）+ 项目页路径与概念表条数：
+
+```
+added   projects/acme/acme.md（概念表 5 条，路径已验证）
+updated projects/web/web.md（重算「项目资料」：新增 2 篇产出文档）
+skipped projects/oa-ai（同 git_remote 已登记，属刷新范围）
+```
+
+「什么都没写」也是合法结果——说明跳过原因即可。
+
 ## 定位时的现查命令（写入项目页「怎么查」）
 
 ```bash
-# 1. 先查知识库
-grep -rn "<中文关键词>" <KB_ROOT>/projects/<project_id>/
+# 1. 先查知识库（带置信分级，弱结果会告警，别直接当答案）
+python3 <技能目录>/tools/kb-search.py "<中文关键词>"
 
-# 2. 再查源码（本机路径从 paths.yaml 取）
-grep -rn "<中文关键词>" "<本机路径>" --include="*.js" --include="*.ts" --include="*.py" --include="*.java"
+# 2. 再查源码（本机路径从 paths.yaml 取；必须排除依赖与构建产物，否则会扫进 node_modules）
+grep -rn "<中文关键词>" "<本机路径>" --include="*.js" --include="*.ts" --include="*.py" --include="*.java" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target
 
 # 3. 命中后读文件确认行号，再决定是否更新概念表
 ```

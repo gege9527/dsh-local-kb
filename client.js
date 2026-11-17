@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
       desktopUnavailable: isZh() ? '当前环境不支持打开本地文件夹' : 'Opening local folders is unavailable in this environment',
       opened: isZh() ? '已打开' : 'Opened',
       openFailed: isZh() ? '打开失败' : 'Open failed',
-      notInstalled: isZh() ? '技能尚未安装到 $DSH_HOME/skills/local-kb' : 'Skill not installed to $DSH_HOME/skills/local-kb',
+      notInstalled: isZh() ? '插件内置技能缺失（skills/local-kb/SKILL.md 未找到）' : 'Bundled skill missing (skills/local-kb/SKILL.md not found)',
       webdavTitle: isZh() ? 'WebDAV 备份' : 'WebDAV Backup',
       webdavDesc: isZh()
         ? '上传：本地覆盖云端，云端多出的文件删除。下载：云端覆盖本地同名文件，本地多出的保留。两个方向都会先确认。'

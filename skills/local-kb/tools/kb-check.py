@@ -305,6 +305,12 @@ def check_memory_dir(d):
     return n
 
 
+# 内容下限类检查会命中大量存量（实测 31 个项目页里 17 个目录结构只有一行），
+# 逐条 warn 会把真正的错误淹没、让每次自检都变红。这里累计，最后汇总成一条。
+doc_no_h2 = 0
+doc_big = 0
+
+
 def check_doc(p, project_doc=False):
     # 主题自描述与索引类文件不是文档正文，单独校验
     if os.path.basename(p) in ("_topic.md", "_projects.md"):
@@ -323,6 +329,18 @@ def check_doc(p, project_doc=False):
             warns.append("文档缺 source: %s" % rel)
         if not field(fm, "date_added"):
             warns.append("文档缺 date_added: %s" % rel)
+    # 结构完整性：长文却没有二级标题，等于整篇平铺，AI 只能从头读到尾
+    body = re.sub(r"(?s)^---.*?---", "", text, count=1)
+    plain = re.sub(r"\s", "", body)
+    h2 = len(re.findall(r"(?m)^## ", text))
+    global doc_no_h2, doc_big
+    # 只查自产文档（projects/<id>/docs/）。docs/ 下是抓来的原文——书稿一章 271KB、
+    # 官方语法参考 209KB 都是源头决定的，加 H2 或拆分反而破坏与源的对应关系，不该报。
+    if project_doc:
+        if h2 == 0 and len(plain) > 2000:
+            doc_no_h2 += 1
+        if len(text.encode("utf-8")) > 40 * 1024:
+            doc_big += 1
 
 
 def walk_md(root, skip=("archive",)):
@@ -354,6 +372,15 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
         sub = os.path.join(PROJECT_ROOT_ROOT, d, "memory")
         if os.path.isdir(sub):
             mem_dirs.append(sub)
+
+# 记忆目录内不得自建 archive/：协议规定归档统一进 <KB_ROOT>/archive/。
+# 建在记忆目录里更糟——walk_md 会跳过 archive 子目录，里面的笔记既不进索引也不报错，
+# 等于悄悄消失（召回永远看不到，也没人知道它还在）。
+for d in mem_dirs:
+    nested = os.path.join(d, "archive")
+    if os.path.isdir(nested):
+        errors.append("记忆目录内不得建 archive/（归档统一放 <KB_ROOT>/archive/）: %s"
+                      % os.path.relpath(nested, KB))
 
 # --fix：先补指针再校验（写入模式下，随后的校验看到的是修好的状态）
 fix_report = []
@@ -390,6 +417,9 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
 
 # 项目页
 page_errors = 0
+page_what_short = []
+page_tree_one = []
+page_files_empty = []
 if os.path.isdir(PROJECT_ROOT_ROOT):
     for d in sorted(os.listdir(PROJECT_ROOT_ROOT)):
         dd = os.path.join(PROJECT_ROOT_ROOT, d)
@@ -408,6 +438,68 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
         has_material = os.path.isdir(os.path.join(dd, "arch")) or os.path.isdir(os.path.join(dd, "docs")) or os.path.isdir(os.path.join(dd, "memory"))
         if has_material and "项目资料" not in text:
             warns.append("项目页缺「项目资料」节: projects/%s" % d)
+        # 项目页「怎么查」的源码 grep 必须带 --exclude-dir：不带会扫进 node_modules，
+        # 实测 8.6 万文件的 monorepo 是 27s / 337K 行，排除后 4.7s / 38K 行
+        query_sec = re.search(r"(?ms)^## 怎么查这个项目\n(.*?)(?=^## |\Z)", text)
+        if query_sec is not None:
+            for line in query_sec.group(1).split("\n"):
+                if line.lstrip().startswith("grep -rn") and "--exclude-dir" not in line:
+                    warns.append("项目页源码搜索缺 --exclude-dir（会扫进 node_modules）: projects/%s" % d)
+                    break
+        # 概念表：inject 的「已收录」只读这张表，空表等于该项目每轮都拿不到提示
+        concept = re.search(r"^## 中文概念[^\n]*\n([\s\S]*?)(?=^## |\Z)", text, re.M)
+        if concept is not None:
+            rows = [ln for ln in concept.group(1).split("\n") if ln.startswith("|")]
+            if len(rows) <= 2:  # 只有表头 + 分隔行
+                warns.append("项目页概念表为空: projects/%s" % d)
+        # 内容下限（实测 14/31 「这是什么」<60 字、17/31 目录结构只有一行）
+        what = re.search(r"(?ms)^## 这是什么\n(.*?)(?=^## |\Z)", text)
+        if what is not None and len(re.sub(r"\s", "", what.group(1))) < 60:
+            page_what_short.append(d)
+        tree = re.search(r"(?ms)^## 目录结构\n(.*?)(?=^## |\Z)", text)
+        if tree is not None:
+            body = tree.group(1)
+            inner = re.search(r"```[a-z]*\n(.*?)```", body, re.S)
+            if inner is not None:
+                lines = [x for x in inner.group(1).split("\n") if x.strip()]
+            else:
+                # 表格 / 列表同样能表达目录，别只认代码块（oa-ai 就是表格）
+                lines = [x for x in body.split("\n")
+                         if x.strip().startswith(("|", "-", "*")) and "---" not in x and "目录" not in x]
+            if len(lines) <= 1:
+                page_tree_one.append(d)
+        files = re.search(r"(?ms)^## 关键文件\n(.*?)(?=^## |\Z)", text)
+        if files is not None:
+            body = files.group(1)
+            rows = [x for x in body.split("\n")
+                    if (x.startswith("|") and "---" not in x and "文件" not in x)
+                    or x.lstrip().startswith(("- ", "* "))]
+            if len(rows) == 0:
+                page_files_empty.append(d)
+        # 「项目资料」表格里的相对 md 路径必须真实存在（归档/改名后最容易留死链）
+        material = re.search(r"^## 项目资料[^\n]*\n([\s\S]*?)(?=^## |\Z)", text, re.M)
+        if material is not None:
+            for target in re.findall(r"`([^`]+\.md)`", material.group(1)):
+                # 只校验 KB 内约定目录：裸文件名可能指源码项目的 README，不该当死链
+                if broken_pointer(target) or not target.startswith(("docs/", "memory/", "arch/", "assets/")):
+                    continue
+                if not os.path.exists(os.path.join(dd, target)):
+                    errors.append("项目资料死链: projects/%s → %s" % (d, target))
+
+# 内容下限汇总：逐条会命中大量存量（见 check_doc 上方注释），合并成几条
+if page_what_short:
+    warns.append("项目页「这是什么」<60 字 %d 个（需说清解决什么问题 + 边界）: %s"
+                 % (len(page_what_short), "、".join(page_what_short[:6])))
+if page_tree_one:
+    warns.append("项目页「目录结构」只列 1 行 %d 个（需每目录带职责）: %s"
+                 % (len(page_tree_one), "、".join(page_tree_one[:6])))
+if page_files_empty:
+    warns.append("项目页「关键文件」空表 %d 个（应删掉整节）: %s"
+                 % (len(page_files_empty), "、".join(page_files_empty)))
+if doc_no_h2:
+    warns.append("文档无二级标题且正文 >2000 字 %d 篇（建议分节）" % doc_no_h2)
+if doc_big:
+    warns.append("文档 >40KB %d 篇（建议按主题拆）" % doc_big)
 
 # paths.yaml
 yp = os.path.join(KB, "paths.yaml")
@@ -431,13 +523,62 @@ if os.path.isdir(docs_root):
             continue
         topic_total += 1
         text = read(tfile)
-        if not re.search(r"^topic:\s*\S", text, re.M):
-            warns.append("_topic.md 缺 topic 字段: docs/%s" % d)
+        # title: 是存量写法（模板早年没定义这个文件），两种都接受
+        if not re.search(r"^(?:topic|title):\s*\S", text, re.M):
+            warns.append("_topic.md 缺 topic/title 字段: docs/%s" % d)
         block = re.search(r"^projects:\s*\n((?:\s+-\s+.*\n?)*)", text, re.M)
         if block is not None:
             for pid in re.findall(r"^\s+-\s+(\S+)", block.group(1), re.M):
                 if known_projects and pid not in known_projects:
                     warns.append("_topic.md 引用未登记项目 %s: docs/%s" % (pid, d))
+
+# 卡片索引健康：源文件数 vs 卡片数（缺卡或孤儿都会让 kb-search 给出假命中）
+CARD_DIR = os.path.join(KB, ".kb-index", "cards")
+if os.path.isdir(CARD_DIR):
+    src = 0
+    for base in ("docs", "projects"):
+        broot = os.path.join(KB, base)
+        if not os.path.isdir(broot):
+            continue
+        for dirpath, dirnames, filenames in os.walk(broot):
+            dirnames[:] = [x for x in dirnames if x not in ("archive", "node_modules", ".git", ".kb-index")]
+            for name in filenames:
+                if not name.endswith(".md") or name in ("MEMORY.md", "_topic.md"):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, name), KB).replace(os.sep, "/")
+                if base == "projects" and "/memory/" in rel:
+                    continue
+                src += 1
+    cards = len([n for n in os.listdir(CARD_DIR) if n.endswith(".md")])
+    if src != cards:
+        warns.append("卡片数与源文件数不符（源 %d / 卡 %d）：跑 kb-card.py --prune" % (src, cards))
+    # 摘要以书稿导航语开头 = 零信息（提取器应跳过，这里防回归）
+    nav = 0
+    for name in os.listdir(CARD_DIR):
+        if not name.endswith(".md"):
+            continue
+        try:
+            ct = open(os.path.join(CARD_DIR, name), encoding="utf-8").read()
+        except OSError:
+            continue
+        m = re.search(r"(?ms)^## 摘要\n(.*?)(?=\n\n## )", ct)
+        if m is not None and m.group(1).strip().startswith(("上一章", "下一章")):
+            nav += 1
+    if nav:
+        warns.append("%d 张卡片摘要是「上一章/下一章」导航语（跑 kb-card.py 重建）" % nav)
+
+# README 是骨架文件：首次运行创建后不会自动更新，旧版会残留 arch 槽位或第三方工具名，
+# 把 AI 引去不存在的目录、或去装不该装的工具
+readme_path = os.path.join(KB, "README.md")
+# 工具名拆成常量拼接：skill-content 测试禁止协议正文出现工具名（那是能力暗示），
+# 但检查器必须知道名字才能拦截旧骨架，所以这里只作为检测字面量存在。
+STALE_TOOL_MARKS = ("code" + "graph", "graph" + "ify")
+if os.path.exists(readme_path):
+    rt = read(readme_path)
+    stale_marks = [w for w in ("arch/",) + STALE_TOOL_MARKS if w in rt]
+    if stale_marks:
+        errors.append("README.md 是旧版骨架（含 %s），按 templates.md「骨架文件模板」重写"
+                      % "、".join(stale_marks))
 
 # 输出
 if JSON_MODE:

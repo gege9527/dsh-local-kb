@@ -15,8 +15,9 @@ import sys
 
 CARD_DIR = ".kb-index/cards"
 SUMMARY_CHARS = 200
+SUMMARY_MIN = 40  # 摘要短于此值时继续累加后续段落（引用块开头的文档常只剩"行记录"这种残句）
 SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
-CARD_VERSION = 2  # 2 = 卡片收录 description / aliases，检索端靠它判断要不要整库重建
+CARD_VERSION = 3  # 3 = 摘要回退链（frontmatter summary→引用块→段落累加），检索端靠它判断整库重建
 VERSION_FILE = ".card-version"
 
 
@@ -41,22 +42,79 @@ def frontmatter(text):
     if end == -1:
         return {}, text
     block = text[3:end]
+    lines = block.split("\n")
     meta = {}
-    for line in block.split("\n"):
-        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
-        if m:
-            meta[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", lines[i])
+        if m is None:
+            i += 1
+            continue
+        key, raw = m.group(1), m.group(2).strip()
+        # YAML 块标量（>- / | 等）：把后续缩进行拼成一行，否则 summary/description
+        # 会被读成字面量 ">-"，卡片摘要就只剩这个符号。
+        if raw in (">", ">-", ">+", "|", "|-", "|+"):
+            folded = []
+            i += 1
+            while i < len(lines) and (lines[i].strip() == "" or lines[i].startswith((" ", "\t"))):
+                if lines[i].strip():
+                    folded.append(lines[i].strip())
+                i += 1
+            meta[key] = " ".join(folded)
+            continue
+        meta[key] = raw.strip('"').strip("'")
+        i += 1
     return meta, text[end + 4:]
 
 
-def first_paragraph(body):
+QUOTE_META = re.compile(r"^\*\*[^*]{1,24}\*\*[:：]?")
+NAV_CHAPTER = re.compile(r"上一章|下一章")
+
+
+def quote_text(block):
+    """引用块的正文：剥掉行首 >，跳过 **info** / **分类**: 这类元数据行。"""
+    kept = []
+    for line in block.split("\n"):
+        text = line.lstrip().lstrip(">").strip()
+        if not text or QUOTE_META.match(text) or text.startswith("#"):
+            continue
+        kept.append(text)
+    return " ".join(kept)
+
+
+def first_paragraph(body, meta=None):
+    """摘要回退链：frontmatter summary/description → 引用块正文 → 正文段落（不足则累加）。
+
+    旧实现直接跳过以 > 开头的块，而文档模式产出的正文第一块正是 > **info** 引用块，
+    导致 AirScript 那类文档的卡片摘要退化成"行记录"这类残句。
+    """
+    meta = meta or {}
+    for key in ("summary", "description"):
+        value = " ".join((meta.get(key) or "").split())
+        if value:
+            return value[:SUMMARY_CHARS]
+    picked = []
+    size = 0
     for block in re.split(r"\n\s*\n", body):
         s = block.strip()
-        if not s or s.startswith("#") or s.startswith(">") or s.startswith("|"):
+        if not s or s.startswith("#") or s.startswith("|"):
             continue
-        s = re.sub(r"\s+", " ", s)
-        return s[:SUMMARY_CHARS]
-    return ""
+        if s.startswith(">"):
+            text = quote_text(s)
+            if not text:
+                continue
+        else:
+            text = re.sub(r"\s+", " ", s)
+            if text.startswith("\x60\x60\x60"):
+                continue
+        # 书稿常见「上一章：X 下一章：Y」导航段：对检索零信息，跳过继续取下一段
+        if text.lstrip().startswith(("上一章", "下一章")) or NAV_CHAPTER.search(text[:30]):
+            continue
+        picked.append(text)
+        size += len(text)
+        if size >= SUMMARY_MIN:
+            break
+    return " ".join(picked)[:SUMMARY_CHARS]
 
 
 def sections(body, offset):
@@ -118,7 +176,7 @@ def build_card(kb_root, rel, full):
     meta, body = frontmatter(text)
     offset = text[: len(text) - len(body)].count("\n") + 1
     title = meta.get("title", "").strip('"') or os.path.basename(rel)[:-3]
-    summary = first_paragraph(body)
+    summary = first_paragraph(body, meta)
     secs = sections(body, offset)
     desc = " ".join((meta.get("description") or "").split())
     alias = ", ".join(read_aliases(text))

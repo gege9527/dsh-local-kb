@@ -1,6 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
+// 隔离 $DSH_HOME：apply() 会跑旧安装迁移，绝不能落到用户真实 ~/.dsh
+process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cap-home-'))
+
 import { apply, judgeIndexWrite } from '../index.js'
 
 // ---- 记忆索引硬上限：只拦「越界且变大」，压缩写入放行 ----
@@ -77,14 +81,14 @@ const mkCtx = () => ({
   },
   tools: { guard: (fn) => { captured = fn } },
 })
-apply(mkCtx(), { kbRoot: root, installSkill: false, registerSkill: false })
+apply(mkCtx(), { kbRoot: root, injectContext: false })
 check('apply 注册了 guard', typeof captured, 'function')
 check('注册的 guard 拒绝超限写入', typeof captured({ name: 'write', arguments: write(line(201)) }), 'string')
 
 let captured2
 const ctx2 = mkCtx()
 ctx2.tools = { guard: (fn) => { captured2 = fn } }
-apply(ctx2, { kbRoot: root, installSkill: false, registerSkill: false, indexCap: false })
+apply(ctx2, { kbRoot: root, indexCap: false, injectContext: false })
 check('indexCap:false 仍注册 guard（删除拦截照常）', typeof captured2, 'function')
 check('indexCap:false 时超限写入放行', captured2({ name: 'write', arguments: write(line(201)) }), undefined)
 

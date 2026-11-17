@@ -32,6 +32,20 @@ description: >-
 不提供**调用关系与影响面分析**——那需要语言级解析，超出文件检索范围。
 判断改动影响时：同文件 grep 调用 + 跑项目测试，以测试结果为准。
 
+## 什么内容不该进知识库
+
+判断标准不是"是不是报告"，而是**能不能由代码机械再生**。
+
+不该存：调用关系图、符号/依赖清单、覆盖率、构建产物摘要——同一份代码重跑一次
+就能原样得到的东西。代码一变它们就全失效，每次召回都在读过期结论。
+
+判据一句话：**代码变了，这份文档还剩多少有效？**
+全失效 → 快照，不存；结论还在 → 知识，可存。
+
+正例：逆向破解结论含实验与试错，不可再生 → 存。
+反例：代码图谱类产物不存；需要时现查——先 `kb-search` 看库里有没有现成结论，
+再 grep 源码、读文件确认行号。
+
 ## KB_ROOT — 知识库根
 
 - 默认：`~/.local-kb/`（解析为 `$HOME/.local-kb/`，主目录根下隐藏目录，跨设备同一相对路径）
@@ -49,7 +63,6 @@ description: >-
   projects/                    # 代码项目（活跃）
     <project_id>/
       <project_id>.md          # 项目主页
-      arch/<project_id>-arch.md  # 架构摘要
       docs/                    # 项目产出文档（分析/方案/报告）
       memory/                  # 项目级记忆（project / 本项目 reference）
   archive/                     # 归档（不删除）：离线的项目、文档、记忆都放这里
@@ -71,7 +84,7 @@ description: >-
 | 目录，含代码特征（`.git` / `package.json` / `src` / `*.py` / `*.js` / `go.mod`…） | **代码模式** |
 | 目录，纯文档 | 文档模式（批量） |
 
-代码模式 → 加载 `references/code-project.md`；文档模式 → `references/doc-archive.md`。
+代码模式 → 加载 `references/code-project.md`；文档模式 → `references/doc-import.md`。
 
 ## 检索方式
 
@@ -79,7 +92,7 @@ description: >-
 
 | 用途 | 做法 |
 |---|---|
-| 知识库内部检索（中文别名、文档、记忆） | 优先 `python3 <技能目录>/tools/kb-search.py "<关键词>"`（自带置信分级）；要裸 grep 时**限定范围 + 排除归档**，别扫 `<KB_ROOT>` 整库 |
+| 知识库内部检索（中文别名、文档、记忆） | 优先 `python3 <技能目录>/tools/kb-search.py "<关键词>"`（自带置信分级）；要裸 grep 时**限定 `projects/` 与 `docs/` + 排除 `archive/`**，别扫 `<KB_ROOT>` 整库 |
 | 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文。frontmatter 的 `description` 给中间权重，`aliases` 整串出现在查询里直接置顶 |
 
 **读检索结果先看置信**：
@@ -193,7 +206,7 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 - 工具后装：库里的降级产物不会自动升级，用 `refresh <名>` 重跑；多处降级时批量提示用户。
 - **KB_ROOT 是数据不是代码**：默认根在用户主目录隐藏目录（`~/.local-kb/`），技能更新/重装不会覆盖它。
   换设备时同步该目录即可；`KB_ROOT` 环境变量可指向任意位置。
-- 新增文档类型：在 `references/doc-archive.md` 的转换表加一行。
+- 新增文档类型：在 `references/doc-import.md` 的转换表加一行。
 - 换设备：同步 KB_ROOT（含 paths.yaml）→ 改 paths.yaml 指向新设备路径 →
   缺失项目按 git_remote 克隆或标记缺失。详见 `references/code-project.md` 末节。
 - 常驻块 = `references/agents-snippet.md`：改动后必须同步 `~/.dsh/AGENTS.md`

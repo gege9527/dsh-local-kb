@@ -1,5 +1,163 @@
 # Changelog
 
+## 0.5.0 — 2026-11-17
+
+技能改成「随包加载」，顺带修掉卸载残留。行为变更：**默认不再往 `$DSH_HOME` 写任何文件**。
+
+### 变更
+
+- **技能目录重排**：`skill/` → `skills/local-kb/`，与 DSH 技能根布局一致；
+  `cordis.patch.yml` 增加一行 `@deepseek-ai/dsh-skill-filesystem`，用 `bundledSkillDir`
+  直接加载包内技能（bundled rank 600），不再复制到用户技能根。
+- **常驻规则改走 `systemPrompt.context`**：原来写进 `$DSH_HOME/AGENTS.md` 的 KB_LOCAL 块，
+  现在由 `local-kb:rules` 上下文条目提供（order 299，mtime 缓存）。插件卸载时 effect
+  自动注销，AGENTS.md 不再被改动。
+- **删掉全部备用路径**：`installSkill` / `appendRules` / `registerSkill` / `autoRegisterSkill`
+  四个配置项移除。技能只有一条来源（bundled provider），不再复制副本、不再运行时注册、
+  不再做 catalog 兜底——避免两条真相源导致「加载的到底是哪一份」不可判定。
+  包内 `skills/local-kb` 缺失时只发一条 warn 日志，不做任何降级。
+- **新增 `migrate.js`**：启动时清理旧产物 —— 带 `.skill-version` 的技能副本（删前备份到
+  `$DSH_HOME/.local-kb-legacy-backup/`）、`AGENTS.md` 里的 KB_LOCAL 块；
+  没有标记的目录视为用户所有，保留并报告冲突。`migrateLegacy: false` 可关。
+- **`kbSearchPath()` 探测顺序**：包内脚本优先，旧副本降为兜底。
+- **发布前校验**：新增 `scripts/check-package.mjs`（`prepublishOnly` + `npm test` 双重挂载）。
+  检查技能载荷 6 个关键文件、`files` 覆盖、`cordis.patch.yml` 的 provider 行（含
+  `bundledSkillDir` 是否指向本包 `skills/`）。缺一项即 `npm publish` 中止——这是
+  去掉运行时兜底后的替代保障。
+- **体检与上传解耦**：`tools/result` 不再因 `autoSync: false` 提前返回。
+  写入 KB 后必定跑 `kb-check` 并记录状态；`autoSync` 只管「体检之后要不要上传」。
+  手动上传（设置页）不受该开关影响。新增 `shouldAutoUpload()` 与 4 条回归断言。
+- **启动自检**：`apply()` 开头检查包内 `skills/local-kb` 是否存在，缺失只 warn
+  （「发布包漏了 skills/」这类问题可见），不改变任何行为。
+
+### 为什么必须迁
+
+技能根按 rank 去重，**数字小的赢**：user-dsh 400 < bundled 600。旧副本不删，
+升级后加载的仍是旧技能 —— 所以清理逻辑和挂载必须在同一版里发布。
+
+### 测试
+
+新增 `tests/migrate.spec.mjs`（27 项）：标记识别、备份、软链只解链接、无标记冲突保留、
+AGENTS 块摘除、幂等、规则注入去标记。全套 18 个测试文件仍全绿。
+
+## 0.4.0 — 2026-11-16
+
+卡片摘要回退链、孤儿卡片自动清理、三处协议断链修复。摘要空洞从 45% 降到 <1%；
+自检从 4 错误 14 警告降到 0 错误 21 警告（剩余警告均需人工补内容）。
+
+### 修复
+
+- **卡片摘要退化（影响 45% 文档）**：`first_paragraph` 跳过 `>` 开头的块，而文档模式产出的
+  正文第一块正是 `> **info**` 引用块——AirScript 那类文档的摘要只剩「行记录」。
+  改为回退链：frontmatter `summary`/`description` → 引用块正文（剥 `> `、跳过 `**分类**:`
+  元数据行）→ 正文段落（不足 40 字继续累加）。实测 460 篇：空摘要 10→0、<60 字节 71→4。
+- **YAML 块标量**：`description: >-` 原先被读成字面量 `>-`；`kb-card.py` 与 `kb-search.py`
+  的 `frontmatter()` 同步支持折叠块。
+- **孤儿卡片**：`kb-search.py` 的自动重建带 `--prune`。源文件删除/改名/归档后不再残留
+  （残留卡片会被命中且无原文片段）。
+- **置信分级误判**：`grade_hits` 的分母只算辅助词（bigram），主词命中不计入，
+  于是「DSH 插件 设置页」命中第 1、证据显示命中 dsh 与插件，却报「低置信 0/2」。
+  改为分母不变、增加**主词下限**（命中 ≥2 个主词或命中一个长度 ≥3 的 → 至少 moderate），
+  详情改为「主词 2/3 · 辅助词 0/2（dsh、插件）」。
+- **技能安装器三处缺陷**（手动刷新副本时暴露）：
+  ① payload 里的 `__pycache__/*.pyc` 被当内容同步 → 每次 `installSkill` 都判「有变化」，
+  且 python 版本一变内容就不同；② 源码 `skill/.skill-version` 历史残留污染 payload，
+  与安装器写的版本互相覆盖，导致永久非幂等；③ 注释承诺「`.skill-version` 存 SKILL.md 哈希」但从未实现。
+  修：`listTree` 排除 `__pycache__/*.pyc/.DS_Store/.skill-version`，安装后写真实哈希版本，
+  并按 `OBSOLETE_PAYLOAD` 清单清理已改名/删除的协议文件（`references/doc-archive.md`）。
+  验证：连续三次安装均 `present / changed 0`。
+- **会话提醒文案（global）**：原来只说「换关键词再搜一次」+「仍无结果再全盘搜索」——
+  既没给检索命令，又把兜底写成并列选项，等于替 AI 确认全盘扫也行。改为给出 `kb-search` 命令、
+  把全盘限定为「确认库里确实没有之后」，并加「搜完把结论补进知识库」的闭环。
+- **版本哨兵文案**：`detect_stale` 原来把「格式版本不符」和「源文档过期」混成一个计数，
+  版本不符时打印「过期 1 篇」，实际是全库重写。改为三态返回，文案区分
+  「格式版本不符，库 X ≠ 代码 Y → 已整库重建」与「卡片已更新：缺卡/过期 N 篇」。
+
+### 新增
+
+- `tests/card-quality.spec.mjs`（7 断言）：摘要非空与长度、元数据剔除、summary 优先、
+  块标量、卡片数 == 源文件数、孤儿重建清理；已接入 `npm test`。
+- `mirror.spec.mjs` 断言 `.kb-index/` 不进 WebDAV 推送。
+- `tests/hit-rate-real.mjs`（`npm run test:hit-real`）：真实知识库命中率基线，31 条自然语言查询
+  （文档 11 / 项目 10 / 记忆 10）。首测 hit@1 **29/31 (94%)**、hit@5 **31/31 (100%)**。
+  顺带暴露两个问题：①置信分级把"主词命中"排除在覆盖率外，导致正确答案被标低置信；
+  ②整句长查询比关键词短查询明显弱（"插件怎么注册设置页" 掉到第 4 位）。
+- `kb-check.py` 四项检查：概念表为空（warn）、项目资料死链（error，限 `docs/ memory/ arch/ assets/`
+  前缀，避免把源码 README 误判）、卡片数与源文件数不符（warn）、**记忆目录内自建 `archive/`（error）**。
+  最后一项以前是漏检：`walk_md(skip=("archive",))` 会把记忆目录下的 `archive/` 整个跳过，
+  里面的笔记既不进索引也不报错，等于悄悄消失。第五项：**KB README 骨架漂移**——
+  骨架只在首次运行/换设备时创建，之后协议更新不会同步，旧版 README 会残留 `arch/` 槽位与
+  第三方工具名，把 AI 引去不存在的目录。检测用的工具名在检查器里拆常量拼接，
+  避免与 `skill-content` 的黑名单冲突。
+- `SKILL.md` 新增「什么内容不该进知识库」：判据是「能否由代码机械再生」，不点名任何工具。
+
+### 协议（v3）
+
+- **文档协议改名** `doc-archive.md` → `doc-import.md`：`archive` 与归档目录 `archive/` 语义撞车。
+- **文档写入补四块**：本地化策略（默认存全文 + `source` 必填 + 时效回访源链接）、
+  负向筛查（只拒抓不到正文的，**不因"可在线取"拒收**）、查重（同 source/标题走刷新）、完成报告。
+- **文档 frontmatter 移除 `description`**：实测文档卡片 desc 覆盖 0/409，标题本身就是内容词；
+  记忆才必须靠 description（文件名是 slug）。
+- **文档 frontmatter 加两个时效字段**：`doc_version`（官方版本号）+ `date_updated`（回源核对日期），
+  都可选。用途：判断"存的是哪一版、有没有跟上"——光看 `date_added` 只知道什么时候存进来。
+  不回填存量（现有 61/409 有），refresh 时顺手补。`group` / `domain` / `status` 是冗余字段，不采纳。
+- **项目页内容下限**：「这是什么」3–5 句 + 必须回答"解决什么问题"+ 边界；「目录结构」每目录带职责；
+  「关键文件」<3 行删节。建档前加查重（同路径/同 git_remote → 刷新），校验加 `kb-check`。
+- **`kb-card.py` 摘要跳过「上一章/下一章」导航段**：书稿章节首段是导航语，20 张卡片摘要零信息，
+  修复后为 0。
+- **`kb-check.py` 新增 6 项内容检查**（这是什么<60 字 / 目录结构只 1 行 / 关键文件空表 /
+  文档无 H2 且 >2000 字 / >40KB / 卡片摘要导航语）。逐条报会命中 58 条存量、淹没真错误，
+  改为累计后汇总成 6 条带项目名的警告。
+
+### 变更
+
+- `CARD_VERSION` 2 → 3（摘要格式变了，检索端据此整库重建一次）。
+- **删除 arch 槽位**：`templates.md` 项目资料表与结构树、`SKILL.md` 结构树、`actions.md` show
+  说明。代码图谱类产物可由源码现查，且卡片设计上不承载符号索引，放进来只会变成空壳卡片。
+- 项目页「怎么查这个项目」改为 kb-search 优先的三段式（原为纯 grep，与 `SKILL.md` 的
+  「优先 kb-search」冲突）。
+- 文档模板补可选 `description` / `aliases`（卡片检索的 desc 加权层原来只服务项目页）。
+- 新增 `_topic.md` 模板；`kb-check` 接受 `topic` 或 `title`（存量 7 个全写 `title`）。
+- 记忆协议：写入前置改为「项目页存在」（原为目录存在，会漏掉半建档）；注明注入截断点是
+  80 行 / 8KB；区分「记忆文件归档」与「active 状态收尾」两种归档。
+- `relatedDocTopics` 支持 `docs/` 根层单篇在自己的 frontmatter 里声明 `projects:`。
+
+### 移除
+
+- **项目记忆关联表**：删掉 `memory/_links.yaml` 机制（`inject.js` 的 `parseLinksYaml` /
+  `crossProjectMemories` 与注入调用，约 40 行；`inject.spec` 同步删 8 条断言）。
+  实测收益过低：31 个项目只有 3 个受益（1 个 key + 2 个被关联），28 个拿不到这行；
+  而且协议零定义、kb-check 不校验引用 id、文件注释声称"自动生成"却无生成代码。
+  跨项目发现改由 `kb-search` 的记忆层（词面命中）与项目页「项目资料」承担。
+  文件归档为 `archive/memory/_links.yaml.deprecated-20261116`。
+
+### 知识库侧（一次性数据整理）
+
+- 18 份 arch 归档到 `archive/projects/<id>/arch/`，18 个项目页表格行清除，`--prune` 清孤儿
+  18（卡片 460 → 442）。
+- 项目页 `web-excel-designer` 补齐（按 code-project 流程，7 条概念路径逐条验证后写入）。
+- 补 `mi6` / `n1` 两条缺失索引；`macpoc-ios-mirror` 全局记忆路径表述修正；
+  `ad-manager` 按用户裁决保留 1 条 `active`（3 条降 `completed`）。
+- 存量项目页查询段刷新：27 个页面的「怎么查这个项目」第一步还是裸 grep（1-5 只改了模板，页面不会自动跟随），
+  已批量改为 `kb-search.py` 优先；`diplay-privacy` 因参数不是通用占位符而手工修。复检：全库裸 grep 提示行 0。
+- 源码搜索加排除规则：27 个项目页的第 2 步补 `--exclude-dir`（通用 `.git/node_modules/dist/build/target`，
+  `ad-manager` 加 `bak`、`diplay-privacy` 加 `out`）。实测 monorepo 不排除是 27.1 s / 337K 行，
+  排除后 4.7 s / 38K 行。`templates.md` 与 `code-project.md`（含建档搜索两处）同步，
+  `kb-check` 新增"缺 --exclude-dir"warn。
+- 补齐 3 个项目页缺失的「怎么查这个项目」节（`macpoc-ios-mirror` / `oa-ai` / `oa-wh-skill` 原先整节都没有），
+  `include` 按各自实际语言分布生成；唯一仍无此节的是 `mi6`（`type: ops-project`，远程设备无本地代码）。
+- 项目页「中文概念 → 位置」批量补齐：17 个项目页共写 60 条概念映射（每条路径先验证存在）。
+  空表从 17 降到 **0**，`kb-check` 因此首次全绿（退出码 0）。
+- 4 条「时效性未标注」记忆加「截至 2026-11-16」状态行。其中 `kb-search-change-pending` 因 0.4.0
+  又改了同一批 20 个文件而重写状态节；原回滚命令 `git checkout -- skill/tools/` 现在会连 0.4.0
+  一起丢掉，已改为显式警告。
+- 重写 `<KB_ROOT>/README.md`：原为早期英文版（含 `arch/` 与第三方查询工具），
+  现按当前骨架模板对齐（kb-search 优先、`_topic.md`、归档统一、可再生产物不入库）；
+  并补 `.kb-index/` 生成物说明与「工具」节（kb-search / kb-card `--prune` / kb-check 的用途与运行时机）。
+- 迁移违规归档：`projects/ad-manager/memory/archive/feedback-api-timing.md.deprecated-20261110`
+  → `archive/projects/ad-manager/memory/feedback-api-timing.md`（正文补 `> 已归档`），空目录删除。
+  全库复查后这是唯一一处记忆目录内的 `archive/`。
+
 ## 0.3.0 — 2026-11-11
 
 检索从「只有词面分」升级为「有名字、有证据、有置信」：卡片开始收录 frontmatter 的

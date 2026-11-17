@@ -3,15 +3,18 @@
  * library at activation time, and append its always-on rules block (the
  * KB_LOCAL section from references/agents-snippet.md) to `$DSH_HOME/AGENTS.md`.
  *
- * This mirrors the dsh-checkpoint-memory plugin's install-skill.js verbatim in
- * mechanism, adapted to the local-kb skill payload:
+ * DEPRECATED（0.4.0 起）：技能改由 `bundledSkillDir` 直接加载，常驻规则走
+ * systemPrompt.context，本文件只在 `installSkill: true` 显式开启时兜底（老 DSH 无
+ * bundledSkillDir 时）。它的删除/清理能力仍然被 migrate.js 复用。
+ *
+ * 机制：
  *
  *  - dsh's filesystem skill provider scans `$DSH_HOME/skills/` as its user skill
  *    root, discovering one skill per subdirectory that carries a valid SKILL.md.
  *  - The plugin ships a byte-identical copy of the whole local-kb skill in
- *    `./skill/` (SKILL.md + references/ + tools/) and — on apply() — ensures that
+ *    `./skills/local-kb/` (SKILL.md + references/ + tools/) and — on apply() — ensures that
  *    copy is present at `$DSH_HOME/skills/local-kb/`.
- *  - It also appends `./skill/references/agents-snippet.md` to
+ *  - It also appends `./skills/local-kb/references/agents-snippet.md` to
  *    `$DSH_HOME/AGENTS.md` so the always-on KB_LOCAL rules are loaded by dsh for
  *    every session. The append is idempotent: if the block is already present,
  *    nothing is added.
@@ -36,6 +39,7 @@
  *
  * Zero dependencies, plain ESM, node: builtins only — same ethos as index.js.
  */
+import { createHash } from 'node:crypto'
 import { constants as FS } from 'node:fs'
 import { lstatSync, realpathSync } from 'node:fs'
 import { access, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
@@ -45,17 +49,13 @@ import { fileURLToPath } from 'node:url'
 
 export const SKILL_NAME = 'local-kb'
 export const VERSION_FILENAME = '.skill-version'
+/** 曾经在 payload 里、现在已删除或改名的文件：同步时从目标目录清掉。
+ *  不通用删除（会误删用户自己加的文件），只维护这份精确清单。 */
+export const OBSOLETE_PAYLOAD = ['references/doc-archive.md']
 export const RULES_SNIPPET = 'references/agents-snippet.md'
 export const AGENTS_FILENAME = 'AGENTS.md'
 export const AGENTS_MARKER_START = '<!-- KB_LOCAL_START -->'
 export const AGENTS_MARKER_END = '<!-- KB_LOCAL_END -->'
-
-/** 常驻块自身带版本号：低版本才刷新，高版本（用户手改）一律不动。 */
-const BLOCK_VERSION_MARK = /<!--\s*KB_LOCAL_VERSION:\s*(\d+)\s*-->/
-export const blockVersion = (text) => {
-  const match = BLOCK_VERSION_MARK.exec(String(text))
-  return match ? Number(match[1]) : 1
-}
 
 /** Resolve `$DSH_HOME`, mirroring dsh's `resolveDshHome`: env wins, else `~/.dsh`. */
 export function resolveDshHome(env = process.env) {
@@ -63,9 +63,9 @@ export function resolveDshHome(env = process.env) {
   return typeof fromEnv === 'string' && fromEnv.trim() !== '' ? resolve(fromEnv) : join(homedir(), '.dsh')
 }
 
-/** The directory the bundled payload ships from. Defaults to `./skill` beside this module. */
+/** The directory the bundled payload ships from. 0.4.0 起是 `./skills/local-kb`（跟 DSH 技能根布局一致）。 */
 export function defaultPayloadDir(moduleUrl = import.meta.url) {
-  return join(dirname(fileURLToPath(moduleUrl)), 'skill')
+  return join(dirname(fileURLToPath(moduleUrl)), 'skills', 'local-kb')
 }
 
 /* Reconciliation outcome summary. */
@@ -156,16 +156,52 @@ export async function installSkill(opts = {}) {
     }
   }
 
+  // 清理已废弃/改名的 payload 文件：否则副本里会同时存在新旧两份协议，
+  // AI 只按 SKILL.md 的指向读新的，旧文件留着迟早被误读。
+  const removed = []
+  for (const rel of OBSOLETE_PAYLOAD) {
+    const target = join(dest, rel)
+    try {
+      await unlink(target)
+      removed.push(rel)
+    } catch {
+      // 不存在就是已经干净
+    }
+  }
+
+  // 版本标记：SKILL.md 的 SHA-256。上面注释承诺过这个标记，早前实现漏了写。
+  let version = 'unchanged'
+  try {
+    const body = await readFile(join(payloadDir, 'SKILL.md'))
+    const digest = createHash('sha256').update(body).digest('hex')
+    const versionPath = join(dest, VERSION_FILENAME)
+    let current = ''
+    try {
+      current = (await readFile(versionPath, 'utf8')).trim()
+    } catch {
+      current = ''
+    }
+    if (current !== digest) {
+      await writeFile(versionPath, digest + '\n')
+      version = 'updated'
+    }
+  } catch {
+    version = 'skipped'
+  }
+
   const agentsResult = blockPlan.status === 'update'
     ? await applyRulesBlock(blockPlan)
     : blockPlan
 
-  const status = changed.length === 0 && agentsResult.status !== 'update'
+  const status = changed.length === 0 && removed.length === 0 && version === 'unchanged'
+    && agentsResult.status !== 'update'
     ? 'present'
     : 'installed'
   return {
     ...outcome(status, dest),
     changed: changed.length,
+    ...(removed.length === 0 ? {} : { removed }),
+    version,
     ...(backup === undefined ? {} : { backup }),
     ...(symlink ? { symlinkTarget: realpathOf(dest) } : {}),
     agents: agentsResult,
@@ -320,12 +356,18 @@ async function copyPayload(src, dst) {
 }
 
 /** List all files under `root` (directories walked, symlinks ignored). */
+/** payload 里的运行期垃圾：python 跑一次就生成 .pyc，不同解释器版本内容还不同，
+ *  不排除的话每次 installSkill 都会判成「有变化」并把 pyc 同步进技能库。 */
+const SKIP_TREE = /(^|\/)(__pycache__|node_modules|\.git)(\/|$)|(\.pyc|\.DS_Store|\.skill-version)$/
+// `.skill-version` 是安装产物，不该出现在 payload 里；一并排除，防止它自己成为「每次都在变」的文件。
+
 async function listTree(root) {
   const files = []
   const walk = async (dir) => {
     const entries = await readdir(dir, { withFileTypes: true })
     for (const entry of entries) {
       const full = join(dir, entry.name)
+      if (SKIP_TREE.test(full)) continue
       if (entry.isDirectory()) {
         await walk(full)
       } else if (entry.isFile()) {

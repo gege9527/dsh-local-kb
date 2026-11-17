@@ -1,7 +1,26 @@
-# dsh-local-kb bundle patch: one row, inserted over whatever layers came before it.
-# 知识库插件：技能安装 + 常驻规范 + 写入即同步 hook + 设置页 + WebDAV 配置。
+# dsh-local-kb bundle patch: 覆盖在更早的层之上的插入行。
+# 知识库插件：技能随包加载（bundled 技能根）+ 常驻规则（systemPrompt.context）
+# + 写入即同步 hook + 设置页 + WebDAV 配置。
+#
+# 技能这一行为什么必须加：
+#   - 旧版本把技能复制到 $DSH_HOME/skills/local-kb/（user-dsh 根，rank 400）；
+#     bundled 根的 rank 是 600，数字小的赢 —— 旧副本不删就会压住新技能。
+#     migrate.js 在插件启动时删除带 .skill-version 标记的旧副本。
+#   - providerName 必须与默认 provider（filesystem）不同，否则两条根会合并成一组。
+#   - includeDefaultRoots: false：这一行只负责包内技能根，用户技能根交给默认 provider，
+#     否则同一批用户技能会被扫两遍。
+#   - bundledSkillDir 必须是绝对路径：provider 内部用 resolve() 解析相对值，
+#     会落到进程 cwd 上。!!js 表达式在 loader 上下文里求值（可用 baseUrl / process）。
+#   - watch: false：包内目录不会在运行时变化，省掉一层文件监听。
 
 - insert:
+    - id: local-kb-skill
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      config:
+        providerName: local-kb-bundled
+        includeDefaultRoots: false
+        watch: false
+        bundledSkillDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('node_modules/dsh-local-kb/skills/', baseUrl))"
     - id: local-kb
       name: dsh-local-kb
       config: {}

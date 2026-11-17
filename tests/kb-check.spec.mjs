@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 //   3. 索引一旦用 ## active/## completed 分组，成员必须与 frontmatter status 一致
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const tool = path.join(here, '..', 'skill', 'tools', 'kb-check.py')
+const tool = path.join(here, '..', 'skills', 'local-kb', 'tools', 'kb-check.py')
 const py = process.env.PYTHON ?? 'python3'
 
 const results = []

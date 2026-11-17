@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-kb",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "知识库 + 长期记忆插件：每轮注入记忆索引与知识地图、索引硬上限、禁止 AI 删除、镜像同步到 WebDAV",
   "keywords": [
     "dsh-plugin",
@@ -54,12 +54,14 @@
     "index.js",
     "inject.js",
     "install-skill.js",
+    "migrate.js",
     "client.js",
-    "skill/",
+    "skills/",
     "cordis.patch.yml",
     "locale/",
     "icon.svg",
     "README.md",
+    "GUIDE.md",
     "LICENSE"
   ],
   "license": "MIT",
@@ -70,7 +72,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "test": "node tests/skill-content.spec.mjs && node tests/tools.spec.mjs && node tests/kb-check.spec.mjs && node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs && node tests/reminder.spec.mjs && node tests/settings.spec.mjs && node tests/uninstall.spec.mjs && node tests/hit-rate.spec.mjs",
+    "test": "node tests/skill-content.spec.mjs && node tests/tools.spec.mjs && node tests/card-quality.spec.mjs && node tests/kb-check.spec.mjs && node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/agents-block.spec.mjs && node tests/mirror.spec.mjs && node tests/reminder.spec.mjs && node tests/settings.spec.mjs && node tests/uninstall.spec.mjs && node tests/migrate.spec.mjs && node tests/hit-rate.spec.mjs && node scripts/check-package.mjs",
     "test:skill": "node tests/skill-content.spec.mjs",
     "test:tools": "node tests/tools.spec.mjs",
     "test:kb-check": "node tests/kb-check.spec.mjs",
@@ -86,6 +88,11 @@
     "test:reminder": "node tests/reminder.spec.mjs",
     "test:settings": "node tests/settings.spec.mjs",
     "test:uninstall": "node tests/uninstall.spec.mjs",
-    "test:hit": "node tests/hit-rate.spec.mjs"
+    "test:hit": "node tests/hit-rate.spec.mjs",
+    "test:card-quality": "node tests/card-quality.spec.mjs",
+    "test:hit-real": "node tests/hit-rate-real.mjs",
+    "test:migrate": "node tests/migrate.spec.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "prepublishOnly": "node scripts/check-package.mjs"
   }
 }

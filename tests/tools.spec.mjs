@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 // ---- kb-card / kb-search：卡片生成与两段式检索 ----
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const toolsDir = path.join(here, '..', 'skill', 'tools')
+const toolsDir = path.join(here, '..', 'skills', 'local-kb', 'tools')
 const py = process.env.PYTHON ?? 'python3'
 
 const results = []
@@ -89,7 +89,7 @@ const noAuto = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载
 check('--no-auto 只提示不写', noAuto.stderr.includes('缺卡 1') && !noAuto.stderr.includes('已自动更新'), noAuto.stderr)
 
 const autoNew = spawnSync(py, [path.join(toolsDir, 'kb-search.py'), '插件加载', kb], { encoding: 'utf8' })
-check('默认自动更新卡片', autoNew.stderr.includes('已自动更新'), autoNew.stderr)
+check('默认自动更新卡片', autoNew.stderr.includes('卡片已更新'), autoNew.stderr)
 check('自动更新后能搜到新文档', autoNew.stdout.includes('new-doc.md'), autoNew.stdout)
 
 const target = path.join(kb, 'docs/DSH/plugin.md')

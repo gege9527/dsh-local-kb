@@ -18,7 +18,7 @@ import sys
 
 CARD_DIR = ".kb-index/cards"
 VERSION_FILE = ".card-version"
-CARD_VERSION = 2  # 与 kb-card.py 同步：2 起卡片收录 desc / alias
+CARD_VERSION = 3  # 与 kb-card.py 同步：3 起摘要走回退链（引用块/段落累加）
 MAX_HITS_PER_DOC = 3
 SNIPPET_CHARS = 110
 TITLE_WEIGHT = 8  # 标题/文件名命中是强信号，实测 3 → 8 把 hit@1 从 13/18 拉到 15/18
@@ -54,11 +54,27 @@ def frontmatter(text):
     end = text.find("\n---", 3)
     if end == -1:
         return {}, text
+    lines = text[3:end].split("\n")
     meta = {}
-    for line in text[3:end].split("\n"):
-        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
-        if m:
-            meta[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", lines[i])
+        if m is None:
+            i += 1
+            continue
+        key, raw = m.group(1), m.group(2).strip()
+        # YAML 块标量（>- / | 等）：与 kb-card.py 同一处理，否则 desc 会被读成 ">-"。
+        if raw in (">", ">-", ">+", "|", "|-", "|+"):
+            folded = []
+            i += 1
+            while i < len(lines) and (lines[i].strip() == "" or lines[i].startswith((" ", "\t"))):
+                if lines[i].strip():
+                    folded.append(lines[i].strip())
+                i += 1
+            meta[key] = " ".join(folded)
+            continue
+        meta[key] = raw.strip('"').strip("'")
+        i += 1
     return meta, text[end + 4:]
 
 
@@ -86,11 +102,15 @@ def slug_of(rel):
 
 
 def detect_stale(kb_root, cards_dir):
-    """卡片缺失、比源文档旧、或格式版本不符 → 返回计数。查询前自检，避免拿旧摘要作答。"""
+    """卡片缺失、比源文档旧、或格式版本不符 → 返回计数。查询前自检，避免拿旧摘要作答。
+
+    第三个返回值单独表达「格式版本不符」：它会触发整库重写，而前两个只是补几篇。
+    混在一起会让提示谎称「过期 1 篇」，人以为只补一篇。
+    """
     missing = 0
     stale = 0
     if read_version(cards_dir) != CARD_VERSION:
-        return 0, 1
+        return 0, 0, True
     for rel, full in iter_docs(kb_root):
         card = os.path.join(cards_dir, slug_of(rel) + ".md")
         try:
@@ -100,7 +120,7 @@ def detect_stale(kb_root, cards_dir):
                 stale += 1
         except OSError:
             continue
-    return missing, stale
+    return missing, stale, False
 
 
 # 中文里只连接两个名词的虚字：按它切段，段落才是「主词」
@@ -323,13 +343,18 @@ def evidence_of(card, query):
     return "keyword"
 
 
-def grade_hits(rows, sec, query):
+def grade_hits(rows, prim, sec, query):
     """给本次检索定置信：strong / moderate / weak / none。
 
     借 gbrain 的 CRAG 分级思路，纯计算、零模型调用：
-    覆盖率只数「辅助词」（bigram / 关键词）在库里的命中比例——分母用查询的
-    全部辅助词，不是能匹配的词，否则「量子纠缠的贝尔不等式」这种整句里只剩
-    一个「不等」，1/1 会被误判成高置信。
+    覆盖率 = (命中主词 + 命中辅助词) / (主词总数 + 辅助词总数)。分母用查询的
+    全部词，不是能匹配的词，否则「量子纠缠的贝尔不等式」这种整句里只剩一个
+    「不等」，1/1 会被误判成高置信。
+
+    另外给主词命中一个下限：主词是语义单位（ASCII token / 按虚字切开的段），
+    命中两个、或命中一个够长的，就不该判成「字面巧合」。
+    旧实现只数辅助词（bigram），导致「DSH 插件 设置页」命中第 1 位、
+    证据显示命中 dsh 与插件，却报「低置信 0/2」。
     """
     if not rows:
         return "none", ""
@@ -337,15 +362,24 @@ def grade_hits(rows, sec, query):
     if alias_hit(top[1]["aliases"], query) or evidence_of(top[1], query) == "exact_title":
         return "strong", "别名或标题精确命中"
     if not sec:
-        # 单字/超短查询没有辅助词：词面直接命中就算可信
+        # 没有辅助词（单字/纯 ASCII 短查询）：词面直接命中就算可信。
+        # 注意这里不能要求 prim 也为空——「F2 是什么框架」剥掉停用词后可能没有 bigram，
+        # 走覆盖率逻辑会因分母为 0 被误判成 weak。
         return ("strong", "短查询词面命中") if top[2] else ("weak", "无词面命中")
+    hit_prim = sorted(set(top[2]) & set(prim))
+    hit_sec = sorted(set(top[2]) & set(sec))
+    # 分母仍只用辅助词：prim 通常只有 1~3 个，混进分母会让原本可信的查询集体降级
     denom = len(sec)
-    hit = sorted(set(top[2]) & set(sec))
-    cov = len(hit) / denom
-    detail = "命中 %d/%d 个词%s" % (len(hit), denom, ("（%s）" % "、".join(hit)) if hit else "")
+    cov = len(hit_sec) / denom if denom else 0.0
+    # 主词下限：主词是语义单位，命中 ≥2 个、或命中一个长度 ≥3 的，就不是字面巧合
+    prim_floor = len(hit_prim) >= 2 or any(len(x) >= 3 for x in hit_prim)
+    shown = "、".join(hit_prim + hit_sec)
+    detail = "主词 %d/%d · 辅助词 %d/%d%s" % (
+        len(hit_prim), len(prim), len(hit_sec), len(sec),
+        ("（%s）" % shown) if shown else "")
     if cov >= 0.5:
         return "strong", detail
-    if cov >= 0.34:
+    if cov >= 0.34 or prim_floor:
         return "moderate", detail
     return "weak", detail
 
@@ -447,8 +481,14 @@ def memory_hits(kb_root, query, limit=5):
 
 
 def rebuild_cards(kb_root):
+    """重建卡片。带 --prune：源文件被删除/改名/归档后，孤儿卡片一并清掉。
+
+    不带 prune 时 kb-card.py 只写不删，而 load_cards 不校验卡片 doc: 指向的源文件
+    是否还在，孤儿会继续参与打分、命中后 snippets() 又读不到文件 —— 结果是只有标题、
+    没有片段和行号的假命中。
+    """
     card_py = os.path.join(os.path.dirname(__file__), "kb-card.py")
-    subprocess.run([sys.executable, card_py, kb_root], capture_output=True, check=False)
+    subprocess.run([sys.executable, card_py, kb_root, "--prune"], capture_output=True, check=False)
 
 
 def main(argv):
@@ -468,13 +508,15 @@ def main(argv):
         rebuild_cards(kb_root)
         print("# 卡片已重建", file=sys.stderr)
 
-    missing, stale = detect_stale(kb_root, cards_dir)
-    if missing or stale:
+    missing, stale, version_bad = detect_stale(kb_root, cards_dir)
+    if missing or stale or version_bad:
         parts = []
+        if version_bad:
+            parts.append("格式版本不符，库 %s ≠ 代码 %d" % (read_version(cards_dir), CARD_VERSION))
         if missing:
             parts.append("缺卡 %d 篇" % missing)
         if stale:
-            parts.append("过期 %d 篇" % stale)
+            parts.append("过期 %d 篇（源文档更新）" % stale)
         if "--no-auto" in argv:
             print(
                 "# 卡片索引需更新（%s）：python3 %s <KB_ROOT>"
@@ -484,7 +526,10 @@ def main(argv):
         else:
             # 自动补齐：卡片是纯生成物（排除同步），换设备后第一次检索就会建好
             rebuild_cards(kb_root)
-            print("# 卡片已自动更新（%s）" % "，".join(parts), file=sys.stderr)
+            if version_bad:
+                print("# %s → 已整库重建" % "，".join(parts), file=sys.stderr)
+            else:
+                print("# 卡片已更新：%s" % "，".join(parts), file=sys.stderr)
 
     prim, sec = split_query(query)
     terms = prim + sec
@@ -503,7 +548,7 @@ def main(argv):
             print("未命中：%d 个词在库中出现过（%s），但没有一篇达到相关阈值" % (len(table), seen))
         return 0
     if rows:
-        level, detail = grade_hits(rows, sec, query)
+        level, detail = grade_hits(rows, prim, sec, query)
         print("命中 %d 篇（关键词：%s）" % (len(rows), query))
         if level == "weak":
             print("⚠ 低置信：%s——可能只是字面巧合，别直接当答案" % detail)

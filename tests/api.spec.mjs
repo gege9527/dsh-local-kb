@@ -67,7 +67,7 @@ function makeCtx() {
   }
 }
 
-apply(makeCtx(), { kbRoot: KB_ROOT, installSkill: false, registerSkill: false })
+apply(makeCtx(), { kbRoot: KB_ROOT })
 
 const results = []
 const check = (name, ok, detail = '') => {

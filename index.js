@@ -2,8 +2,8 @@
  * dsh-local-kb — 知识库插件 Host 半。
  *
  * 三件事（技能文件本身一字不改，全部旁路增强）：
- *   1. 安装 local-kb 技能副本到 $DSH_HOME/skills/local-kb/，并把 KB_LOCAL 常驻块写入
- *      $DSH_HOME/AGENTS.md（install-skill.js，幂等；源技能目录永不触碰）。
+ *   1. 技能随包加载（bundledSkillDir，见 cordis.patch.yml），常驻规则走 systemPrompt.context；
+ *      旧版本留下的技能副本与 AGENTS.md 常驻块由 migrate.js 一次性清掉，卸载零残留。
  *   2. hook 机制（技能做不到的部分）：tools/result 事件精确监听「模型对 KB_ROOT 的
  *      写入工具调用」，成功才触发一次异步 WebDAV 同步 —— 不是文件监听、不轮询，
  *      与技能的「写入才同步」语义一致；同步失败绝不返回给工具调用链（fire-and-forget），
@@ -15,7 +15,7 @@
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as FS, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { constants as FS, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { access, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
@@ -24,7 +24,8 @@ import https from 'node:https'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { installSkill, SKILL_NAME } from './install-skill.js'
+import { SKILL_NAME } from './install-skill.js'
+import { migrateLegacyInstall } from './migrate.js'
 import {
   DEFAULT_INDEX_MAX_BYTES,
   DEFAULT_INDEX_MAX_LINES,
@@ -32,6 +33,8 @@ import {
   memoryIndexText,
   parsePathsYaml,
   projectKind,
+  rulesText,
+  skillDir,
 } from './inject.js'
 
 // 任务内提醒的消息工厂：优先用 DSH 官方 createUserMessage；解析失败（测试/非 DSH 环境）
@@ -52,6 +55,15 @@ export const API_BASE = '/api/local-kb'
 export const SYNC_STATE_FILENAME = '.kb-sync-state.json'
 /** 远端子目录：所有同步内容放在 WebDAV 根下的这一个文件夹，避免污染远端根。 */
 export const REMOTE_SYNC_DIR = 'local-kb-sync'
+
+/**
+ * 自动链路是否继续上传。
+ * 体检（kb-check）不受这个开关影响：写入后永远体检，只是没开自动同步就不推远端。
+ * 手动上传走 trigger: 'manual'，不看这个开关。
+ */
+export function shouldAutoUpload(autoSync) {
+  return autoSync === true
+}
 
 /** 远端根目录：只允许相对路径，挡掉空值、.. 与反斜杠。 */
 export function sanitizeRemoteDir(value) {
@@ -209,7 +221,7 @@ export function bashWritesKb(kbRoot, args) {
 /* =========================================================================
  * 记忆索引上限：确定性拒绝（不是提醒）
  * -------------------------------------------------------------------------
- * 与 skill/tools/kb-check.py 同一组数字：软 150 行/20KB 只警告，硬 200 行/25KB 拒绝。
+ * 与 skills/local-kb/tools/kb-check.py 同一组数字：软 150 行/20KB 只警告，硬 200 行/25KB 拒绝。
  * 只拒绝「越界且比现在变大」的写入 —— 压缩（213 → 205 → 198）一路放行，
  * 否则索引一旦超限就再也改不动。
  * ======================================================================= */
@@ -949,30 +961,27 @@ export function apply(ctx, config = {}) {
   // 运行时设置：远端根目录、自动同步开关。改设置页即时生效，不必重启。
   const pluginSettings = loadPluginSettings(dshHome)
 
-  // ---- 技能安装：副本 + AGENTS.md 常驻块（幂等，fire-and-forget，绝不阻断启动） ----
-  if (config.installSkill !== false) {
-    void installSkill({ dshHome, appendRules: config.appendRules })
+  // ---- 旧安装方式迁移：删掉复制出来的技能副本 + AGENTS.md 常驻块 ----
+  // 必须跑在其它事情之前：技能根是 rank 400（user-dsh），会压过 bundled 的 600，
+  // 旧副本不删就永远加载旧技能。只删带 .skill-version 标记的，删前备份。
+  if (config.migrateLegacy !== false) {
+    try {
+      const migration = migrateLegacyInstall({ dshHome })
+      if (migration.skillCopy === 'removed' || migration.agentsBlock === 'removed') {
+        ctx.logger?.info?.('local-kb: 已迁移旧安装（' + describeMigration(migration) + '）')
+      } else if (migration.skillCopy === 'conflict') {
+        ctx.logger?.warn?.('local-kb: $DSH_HOME/skills/local-kb 不是本插件装的（无 .skill-version），保留原样')
+      }
+    } catch {
+      // 迁移失败不影响插件本体：技能由 bundled 加载，最坏是旧副本还压着。
+    }
   }
 
-  // ---- 运行时技能注册：安全网，保证技能条目在 catalog 中（同 checkpoint-memory 模式） ----
-  if (config.registerSkill !== false) {
-    ctx.inject(['skills'], (inner) => {
-      const skillBody = readSkillBody()
-      inner.effect(() => inner.skills.register({
-        name: SKILL_NAME,
-        description:
-          '独立知识库。把代码项目与本地文档存入纯 Markdown 文件知识库（' + kbRoot + '），' +
-          '供 AI 检索定位与长期记忆，纯本地文件。触发词：存进知识库、加入知识库、' +
-          '保存这个文档、保存这个项目、查某功能在哪个代码位置、知识库里有什么、记住、别忘了。' +
-          '写入 ' + kbRoot + ' 会由插件自动 WebDAV 同步。',
-        whenToUse:
-          '知识库查询/写入/记忆的任何请求：找东西、存文档、记住事实时先查知识库；' +
-          '任何写入 ' + kbRoot + ' 的读写任务。',
-        source: 'runtime',
-        // 技能副本读不到（安装失败/被删）时退回内置摘要，绝不让技能条目退回 null。
-        content: skillBody ?? builtinSkill(kbRoot),
-      }))
-    })
+  // ---- 技能只有一条路径：cordis.patch.yml 的 bundledSkillDir ----
+  // 不装副本、不做运行时注册、没有兜底：技能要么由 provider 加载，要么就是没有。
+  // 这里只做一次存在性检查并发日志，方便排查「发布包漏了 skills/」这类问题。
+  if (!existsSync(skillDir())) {
+    ctx.logger?.warn?.('local-kb: 包内 skills/local-kb 缺失，技能将不可用（检查 package.json files 与发布产物）')
   }
 
   // ---- 记忆索引硬上限：ctx.tools.guard（同步、单调拒绝） ----
@@ -1034,6 +1043,29 @@ export function apply(ctx, config = {}) {
             return knowledgeMapText({ kbRoot, cwd: sessionCwd(context), cache })
           } catch {
             return ''
+          }
+        },
+      }))
+    })
+  }
+
+  // ---- 常驻规则：替代旧方案写进 $DSH_HOME/AGENTS.md 的 KB_LOCAL 块 ----
+  // 走 systemPrompt.context 而不是改用户文件：插件一卸，effect 自动注销，零残留。
+  // 内容与技能自带的 references/agents-snippet.md 同源，跟着插件版本走。
+  if (config.injectRules !== false) {
+    const ruleCache = new Map()
+    ctx.inject(['systemPrompt'], (inner) => {
+      const prompt = inner.systemPrompt
+      if (typeof prompt?.context !== 'function') return
+      inner.effect(() => prompt.context({
+        name: 'local-kb:rules',
+        order: 299,
+        interpolate: false,
+        text: () => {
+          try {
+            return rulesText(ruleCache)
+          } catch {
+            return '' // 规则缺失不能拖垮请求
           }
         },
       }))
@@ -1105,7 +1137,7 @@ export function apply(ctx, config = {}) {
   /** 定位插件自带的 kb-check.py（随技能副本一起发布）。 */
 function kbCheckScript() {
   const here = dirname(fileURLToPath(import.meta.url))
-  return join(here, 'skill', 'tools', 'kb-check.py')
+  return join(here, 'skills', 'local-kb', 'tools', 'kb-check.py')
 }
 
 /** kb-check.py 校验：技能铁律「写入后必跑校验」的 hook 兜底 —— AI 忘记跑时插件补跑。
@@ -1177,10 +1209,15 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
   async function runSync({ trigger }) {
     try {
       // 校验永远不阻塞同步：kb-check 只记录状态供设置页展示。
-      // auto（写入后）跑一次校验（技能铁律），manual（立即同步）跳过。
+      // auto（写入后）必跑一次校验（技能铁律「写入后必校验」），与是否上传无关；
+      // manual（设置页立即同步）跳过，避免用户主动上传时被全库扫描拖慢。
       // 无论校验通过/警告/失败，文件照常推 —— 知识库长期有错不能被卡死不同步。
       if (trigger === 'auto') {
         await runKbCheck()
+        // 校验常开、上传受开关控制：没开自动同步就到此为止，只留体检结果。
+        if (!shouldAutoUpload(pluginSettings.autoSync)) {
+          return { ok: false, skipped: true, reason: '自动上传未开启（仅体检）', state: syncState.snapshot() }
+        }
       }
       const creds = ctx.get('credentials')
       const url = await resolveRef(creds, CRED_URL_REF)
@@ -1240,7 +1277,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
 
   ctx.on('tools/result', (exec, result) => {
     try {
-      if (pluginSettings.autoSync === false) return // 自动同步关闭：只留手动上传
+      // 注意：这里不判 autoSync。写入后必须体检（技能铁律），是否上传由 runSync 决定。
       if (!exec || !exec.arguments || typeof exec.arguments !== 'object') return
       if (result && result.isError) return // 只同步写入成功的调用
       const args = exec.arguments
@@ -1354,11 +1391,30 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
     })
 
     // ---- 任务内提醒（post-execute 附加上下文；不 deny、不重写结果、零打断）----
-    const kbGrep = 'grep -rn "关键词" ' + kbRoot + '/projects/*/*.md ' + kbRoot + '/docs/'
+    // 检索提示：kb-search 带置信分级（弱结果会告警），比裸 grep 可靠；
+    // 脚本缺失时回落成"限定项目目录 + 排除 archive"的 grep，不再教整库 grep。
+    const kbSearchScript = (() => {
+      const candidates = [join(resolveDshHome(), 'skills', 'local-kb', 'tools', 'kb-search.py')]
+      try {
+        candidates.push(fileURLToPath(new URL('./skills/local-kb/tools/kb-search.py', import.meta.url)))
+      } catch {}
+      for (const c of candidates) {
+        try {
+          if (statSync(c).isFile()) return c
+        } catch {}
+      }
+      return null
+    })()
+    const kbGrep = kbSearchScript
+      ? 'python3 ' + kbSearchScript + ' "关键词"（先看它的置信提示）'
+      : 'grep -rn "关键词" ' + kbRoot + '/projects/<id>/ ' + kbRoot + '/docs/ --exclude-dir=archive'
     const reminderTexts = {
       // 知识库没有覆盖项目/文档的总索引（只有记忆有 MEMORY.md），
       // 所以这里不能说「知识库有索引」——那是错误的定位信息。
-      global: '全盘扫描开销大。KB 没命中可以换关键词再搜一次（项目页/文档是中文正文，别名在 frontmatter）；仍无结果再全盘搜索。',
+      // 原来只写「换关键词再搜一次」+「仍无结果再全盘搜索」：既没给检索命令，又把兜底写成并列选项，
+      // 等于替它确认全盘扫也行。现在给命令、把全盘限定为「确认库里没有之后」，并加写回闭环。
+      global: '全盘扫描开销大。先换关键词用知识库检索再试一次（项目页/文档是中文正文，别名在 frontmatter）：' +
+        kbGrep + '；确认库里确实没有，再全盘搜索，搜完把结论补进知识库（下次不用再扫）。',
       // 索引通常已由插件注入；提醒只在「没看到注入内容」时有意义。
       memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：' +
         '上下文里已有「记忆索引（插件每轮注入）」就直接用；没看到时 read ' + kbRoot + '/memory/MEMORY.md' +
@@ -1501,32 +1557,15 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
 
 }
 
-/** 技能副本不可用时的最小说明：保证技能条目存在且指向正确位置。 */
-function builtinSkill(kbRoot) {
-  return [
-    '# local-kb — 知识库 + 长期记忆',
-    '',
-    '知识库根：' + kbRoot,
-    '',
-    '- 记忆：' + join(kbRoot, 'memory', 'MEMORY.md') + '（全局）、' +
-      join(kbRoot, 'projects', '<id>', 'memory', 'MEMORY.md') + '（项目级）',
-    '- 知识：' + join(kbRoot, 'projects') + '/<id>/<id>.md（项目页）、' + join(kbRoot, 'docs') + '（文档）',
-    '- 项目路径：' + join(kbRoot, 'paths.yaml'),
-    '- 检索：grep -rn "关键词" ' + join(kbRoot, 'projects', '*', '*.md') + ' ' + join(kbRoot, 'docs'),
-    '',
-    '完整协议见插件自带的 skill/SKILL.md；这一份只是副本不可用时的兜底。',
-  ].join('\n')
+/** 迁移结果的简短描述（写日志用）。 */
+function describeMigration(migration) {
+  const parts = []
+  if (migration.skillCopy === 'removed') parts.push('旧技能副本已删除')
+  if (migration.agentsBlock === 'removed') parts.push('AGENTS.md 常驻块已摘除')
+  if (migration.backup) parts.push('备份：' + migration.backup)
+  return parts.join('；') || '无变更'
 }
 
-/** 读插件自带的完整 SKILL.md（注册运行时技能用）。 */
-function readSkillBody() {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url))
-    return readFileSync(join(here, 'skill', 'SKILL.md'), 'utf8')
-  } catch {
-    return null
-  }
-}
 
 /** 组装设置页 API 的三个 handler（Web Fetch API：Request → Response）。 */
 function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings, getCredentials }) {
@@ -1566,7 +1605,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
           autoSync: pluginSettings.autoSync,
           provider: pluginSettings.provider,
         },
-        installed: await skillInstalled(dshHome),
+        installed: await skillInstalled(),
       })
     },
 
@@ -1750,9 +1789,10 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
   }
 }
 
-async function skillInstalled(dshHome) {
+/** 技能是否可用：只看包内那份（bundledSkillDir 加载的就是它），没有回退路径。 */
+async function skillInstalled() {
   try {
-    await access(join(dshHome, 'skills', SKILL_NAME, 'SKILL.md'), FS.F_OK)
+    await access(join(skillDir(), 'SKILL.md'), FS.F_OK)
     return true
   } catch {
     return false

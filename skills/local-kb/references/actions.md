@@ -14,7 +14,7 @@
 ## show <名>
 
 - 解析顺序：`aliases`（frontmatter）→ 文件名 → 目录名
-- 项目 → 读 `projects/<id>/<id>.md`（其「项目资料」节指向的 arch/docs/memory 按需继续读）
+- 项目 → 读 `projects/<id>/<id>.md`（其「项目资料」节指向的 docs/memory 按需继续读）
 - 文档 → `docs/<名>.md` 或 `projects/<id>/docs/<名>.md`
 - 只读
 
@@ -33,7 +33,7 @@
 ## refresh <名>
 
 - 代码项目 → `code-project.md`「刷新」
-- 文档 → `doc-archive.md`「刷新」
+- 文档 → `doc-import.md`「刷新」
 - **降级升级入口**：工具后装 → 经用户确认后 refresh 重跑，把降级产物升级为工具版（去掉"降级生成"标注）
 - **不自动批量 refresh**；多处降级时只报告"有 N 个降级项目可升级"
 

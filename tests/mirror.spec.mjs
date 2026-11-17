@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { downloadRoot, syncRoot } from '../index.js'
+import { downloadRoot, shouldAutoUpload, syncRoot } from '../index.js'
 
 // ---- 远端镜像：本地什么样远端什么样；垃圾文件排除；多余项删除 ----
 
@@ -70,6 +70,9 @@ write('docs/a.md', 'doc a')
 write('projects/p/p.md', 'page')
 write('.DS_Store', 'junk')
 write('docs/.DS_Store', 'junk')
+// 卡片索引是生成物：新设备重建即可，不该占同步带宽
+write('.kb-index/cards/docs-a.md', '---\ndoc: docs/a.md\n---\n')
+write('.kb-index/.card-version', '3\n')
 
 // 远端预置：一个本地已删的旧文件、一个垃圾文件、一个已删的文档
 remote.set('stale.md', 'old')
@@ -91,6 +94,8 @@ check('删除包含已删笔记', first.deleted.includes('stale.md'))
 check('删除包含垃圾文件', first.deleted.includes('.DS_Store'))
 check('远端最终与本地一致', [...remote.keys()].sort().join(',') === 'README.md,docs/a.md,projects/p/p.md', JSON.stringify([...remote.keys()]))
 check('内容被覆盖为本地版本', remote.get('README.md') === 'readme')
+check('卡片索引不进推送', !first.pushed.some((r) => r.startsWith('.kb-index/')), JSON.stringify(first.pushed))
+check('远端不含卡片索引', ![...remote.keys()].some((r) => r.startsWith('.kb-index/')))
 
 const previousMap = first.fileMap
 const scansBefore = propfindCount
@@ -118,6 +123,12 @@ check('云端内容覆盖本地', fs.readFileSync(path.join(kb, 'docs/a.md'), 'u
 check('云端独有文件落到本地', fs.existsSync(path.join(kb, 'docs/cloud-only.md')))
 check('本地独有文件不被删除', fs.existsSync(path.join(kb, 'docs/local-only.md')))
 check('下载失败清单为空', down.failed.length === 0, JSON.stringify(down.failed))
+
+// ---- 上传闸门：体检常开，上传只看开关（默认关） ----
+check('默认关：auto 链路不上传', shouldAutoUpload(false) === false)
+check('默认值 undefined 视为关', shouldAutoUpload(undefined) === false)
+check('显式开：auto 链路上传', shouldAutoUpload(true) === true)
+check('非布尔值不放开', shouldAutoUpload('true') === false)
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
