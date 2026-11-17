@@ -156,7 +156,7 @@ npm test        # 18 个测试文件
 | `index.js` | Host 半：注入、guard、同步、API |
 | `inject.js` | 记忆索引、知识地图、常驻规则的组装（同步 IO + mtime 缓存） |
 | `migrate.js` | 旧安装迁移：删技能副本（带 `.skill-version` 才删）+ 摘 `AGENTS.md` 块 |
-| `install-skill.js` | 老式安装 / 卸载工具（默认不再调用，`--uninstall` 仍可用） |
+| `install-skill.js` | 只保留卸载（`--uninstall`）；安装已由 `bundledSkillDir` 自动完成 |
 | `client.js` | 浏览器半：设置页 |
 | `skills/local-kb/` | local-kb 技能完整副本（由 `bundledSkillDir` 直接加载，与上游逐字节一致） |
 | `scripts/check-package.mjs` | 发布前校验（`prepublishOnly`）：技能载荷、files 覆盖、patch provider 行缺一即中止 |

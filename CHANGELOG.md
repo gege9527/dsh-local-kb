@@ -2,6 +2,12 @@
 
 ## 未发布
 
+- **清理旧安装器**：`install-skill.js` 从 502 行删到 148 行，只留常量、`resolveDshHome` 与
+  `uninstallSkill`；`installSkill` / `appendRulesToAgents` 及其测试（`agents-block.spec.mjs`）删除，
+  卸载行为由 `uninstall.spec.mjs` 继续覆盖。
+- **去掉技能路径回落**：kb-search 脚本只认包内路径，不再回落到 `$DSH_HOME/skills/local-kb`（旧副本已被迁移清掉）。
+- **提醒去冗余**：记忆索引已每步注入时不再发「记忆先行」提醒；每类提醒会话上限 2→3，
+  文案改为「项目 / 父项目 / 全局」三段索引的说法。
 - **项目命名规则**：`project_id` 取「能保证唯一的最短路径后缀」（各段 kebab 化，多段用 `-` 连接，中文原样）。
   新增 `kb-move-project.py`：`--scan/--from-path` 生成计划、`--apply --plan` 执行，一次性更新
   paths.yaml、`projects/<id>/` 目录、项目页 frontmatter、全库引用与卡片，执行前自动备份。
