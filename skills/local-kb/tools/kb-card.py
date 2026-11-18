@@ -131,14 +131,19 @@ def build_card(kb_root, rel, full):
         "",
         "## 摘要",
         summary or "（无正文段落）",
-        "",
-        "## 小节",
     ]
-    if secs:
-        for heading, line in secs[:20]:
-            lines.append("- %s (L%d)" % (heading, line))
-    else:
-        lines.append("- （无二级标题）")
+    # 项目页的小节是固定模板（这是什么/目录结构/项目资料…），对检索与导航都没有信息量；
+    # 长文档的小节才是有效目录。只给非项目页输出「## 小节」。
+    parts = rel.replace(os.sep, "/").split("/")
+    is_project_page = len(parts) == 3 and parts[0] == "projects" and parts[2] == parts[1] + ".md"
+    if not is_project_page:
+        lines.append("")
+        lines.append("## 小节")
+        if secs:
+            for heading, line in secs[:20]:
+                lines.append("- %s (L%d)" % (heading, line))
+        else:
+            lines.append("- （无二级标题）")
     tags = meta.get("tags", "")
     if tags:
         lines.append("")

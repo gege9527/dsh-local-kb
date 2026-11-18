@@ -59,6 +59,9 @@ const card = fs.readFileSync(path.join(kb, '.kb-index', 'cards', cards.find((n) 
 check('卡片带标题', card.includes('DSH 插件实战'))
 check('卡片带摘要', card.includes('第一章讲插件加载'))
 check('卡片带小节行号', /- 生命周期 \(L8\)/.test(card), card)
+const pageCard = fs.readFileSync(path.join(kb, '.kb-index', 'cards', 'projects-demo-demo.md'), 'utf8')
+check('项目页卡片不输出固定小节', !pageCard.includes('## 小节'), pageCard)
+check('文档卡片保留小节', card.includes('## 小节'), card)
 
 // 3. 检索：文档命中走卡片层
 const hit = search(['插件加载', kb, '--rebuild'])
