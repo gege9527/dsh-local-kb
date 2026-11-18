@@ -7,7 +7,7 @@
   3. 原文 grep 出具体行号，输出 1~2K token 的片段，不返回整章正文。
 
 用法：
-    python3 kb-search.py "<关键词>" [KB_ROOT] [--limit N] [--rebuild] [--no-auto]
+    python3 kb-search.py "<关键词>" [KB_ROOT] [--limit N] [--rebuild] [--no-auto] [--explain]
 """
 
 import math
@@ -16,9 +16,9 @@ import re
 import subprocess
 import sys
 
-CARD_DIR = ".kb-index/cards"
-VERSION_FILE = ".card-version"
-CARD_VERSION = 3  # 与 kb-card.py 同步：3 起摘要走回退链（引用块/段落累加）
+# 同目录模块：被 importlib 直接加载时 sys.path 里没有脚本目录，显式补上
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_common import CARD_DIR, CARD_VERSION, frontmatter, iter_docs, read_version, slug_of, version_path
 MAX_HITS_PER_DOC = 3
 SNIPPET_CHARS = 110
 TITLE_WEIGHT = 8  # 标题/文件名命中是强信号，实测 3 → 8 把 hit@1 从 13/18 拉到 15/18
@@ -30,8 +30,6 @@ MIN_RATIO_OF_TOP = 0.30
 MIN_SCORE = 1.0
 BM25_K1 = 1.5
 BM25_B = 0.75
-
-CARD_SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
 
 # 多字停用词：只剥离「问句骨架」，不动实词。单字（的/和/与）不剥，避免切坏词。
 STOP_PHRASES = [
@@ -46,59 +44,6 @@ STOP_PHRASES = [
 
 ASCII_RE = re.compile(r"[a-z0-9][a-z0-9_.#+/-]*")
 CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
-
-
-def frontmatter(text):
-    if not text.startswith("---"):
-        return {}, text
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}, text
-    lines = text[3:end].split("\n")
-    meta = {}
-    i = 0
-    while i < len(lines):
-        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", lines[i])
-        if m is None:
-            i += 1
-            continue
-        key, raw = m.group(1), m.group(2).strip()
-        # YAML 块标量（>- / | 等）：与 kb-card.py 同一处理，否则 desc 会被读成 ">-"。
-        if raw in (">", ">-", ">+", "|", "|-", "|+"):
-            folded = []
-            i += 1
-            while i < len(lines) and (lines[i].strip() == "" or lines[i].startswith((" ", "\t"))):
-                if lines[i].strip():
-                    folded.append(lines[i].strip())
-                i += 1
-            meta[key] = " ".join(folded)
-            continue
-        meta[key] = raw.strip('"').strip("'")
-        i += 1
-    return meta, text[end + 4:]
-
-
-def iter_docs(kb_root):
-    """与 kb-card.py 同一套枚举规则：doc 卡片对应 docs/ 与 projects/<id>/docs/。"""
-    for base in ("docs", "projects"):
-        root = os.path.join(kb_root, base)
-        if not os.path.isdir(root):
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in CARD_SKIP_DIRS]
-            for name in filenames:
-                if not name.endswith(".md") or name in ("MEMORY.md", "_topic.md"):
-                    continue
-                full = os.path.join(dirpath, name)
-                rel = os.path.relpath(full, kb_root)
-                if base == "projects" and "/memory/" in rel:
-                    continue
-                yield rel, full
-
-
-def slug_of(rel):
-    stem = rel[:-3] if rel.endswith(".md") else rel
-    return re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]+", "-", stem).strip("-")
 
 
 def detect_stale(kb_root, cards_dir):
@@ -183,7 +128,7 @@ def load_cards(kb_root):
         if not name.endswith(".md"):
             continue
         try:
-            text = open(os.path.join(cards_dir, name), encoding="utf-8").read()
+            text = open(os.path.join(cards_dir, name), encoding="utf-8", errors="replace").read()
         except OSError:
             continue
         meta, body = frontmatter(text)
@@ -246,16 +191,6 @@ def parse_aliases(raw):
         if name:
             out.append(name)
     return out
-
-
-def read_version(cards_dir):
-    """读卡片格式版本；缺失或读不懂都当 0（触发一次整库重建）。
-    版本文件在 cards/ 的父目录，cards/ 里只有卡片。"""
-    try:
-        with open(os.path.join(os.path.dirname(cards_dir), VERSION_FILE), encoding="utf-8") as fh:
-            return int(fh.read().strip() or 0)
-    except (OSError, ValueError):
-        return 0
 
 
 def norm_name(text):
@@ -388,7 +323,7 @@ def snippets(path, terms, kb_root):
     best = sorted(terms, key=len, reverse=True)
     hits = []
     try:
-        lines = open(path, encoding="utf-8").read().split("\n")
+        lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
     except OSError:
         return hits
     for i, line in enumerate(lines, 1):
@@ -425,7 +360,7 @@ def load_memories(kb_root):
                     continue
                 full = os.path.join(dirpath, name)
                 try:
-                    text = open(full, encoding="utf-8").read()
+                    text = open(full, encoding="utf-8", errors="replace").read()
                 except OSError:
                     continue
                 m = re.search(r"^description:\s*(.+)$", text[:1024], re.M)
@@ -488,25 +423,39 @@ def rebuild_cards(kb_root):
     没有片段和行号的假命中。
     """
     card_py = os.path.join(os.path.dirname(__file__), "kb-card.py")
-    subprocess.run([sys.executable, card_py, kb_root, "--prune"], capture_output=True, check=False)
+    return subprocess.run([sys.executable, card_py, kb_root, "--prune"], capture_output=True, check=False).returncode
 
 
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print('用法: kb-search.py "<关键词>" [KB_ROOT] [--limit N] [--rebuild] [--no-auto]', file=sys.stderr)
+        print('用法: kb-search.py "<关键词>" [KB_ROOT] [--limit N] [--rebuild] [--no-auto] [--explain]', file=sys.stderr)
         return 2
     query = argv[1]
-    rest = [a for a in argv[2:] if not a.startswith("--")]
-    kb_root = os.path.expanduser(rest[0] if rest else "~/.local-kb")
+    # 先摘掉带值的选项再取位置参数：否则 `--limit 5` 会把 "5" 当成 KB_ROOT 去查空库。
     limit = 5
-    for i, a in enumerate(argv):
+    rest = []
+    i = 2
+    while i < len(argv):
+        a = argv[i]
         if a == "--limit" and i + 1 < len(argv):
-            limit = int(argv[i + 1])
+            try:
+                limit = max(1, int(argv[i + 1]))
+            except ValueError:
+                limit = 5
+            i += 2
+            continue
+        if a.startswith("--"):
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+    kb_root = os.path.expanduser(rest[0] if rest else "~/.local-kb")
     cards_dir = os.path.join(kb_root, CARD_DIR)
 
     if "--rebuild" in argv:
-        rebuild_cards(kb_root)
-        print("# 卡片已重建", file=sys.stderr)
+        code = rebuild_cards(kb_root)
+        print("# 卡片已重建" if code == 0 else "# 卡片重建失败（退出码 %d）：python3 %s %s"
+              % (code, os.path.join(os.path.dirname(__file__), "kb-card.py"), kb_root), file=sys.stderr)
 
     missing, stale, version_bad = detect_stale(kb_root, cards_dir)
     if missing or stale or version_bad:
@@ -525,11 +474,21 @@ def main(argv):
             )
         else:
             # 自动补齐：卡片是纯生成物（排除同步），换设备后第一次检索就会建好
-            rebuild_cards(kb_root)
-            if version_bad:
+            code = rebuild_cards(kb_root)
+            if code != 0:
+                print("# 卡片重建失败（退出码 %d），本次只有记忆结果、文档未参与检索" % code, file=sys.stderr)
+            elif version_bad:
                 print("# %s → 已整库重建" % "，".join(parts), file=sys.stderr)
             else:
                 print("# 卡片已更新：%s" % "，".join(parts), file=sys.stderr)
+
+    # 卡片是文档检索的唯一数据源：为空时必须明说，否则「没有文档结果」会被当成「库里没有」。
+    try:
+        has_cards = any(n.endswith(".md") for n in os.listdir(cards_dir))
+    except OSError:
+        has_cards = False
+    if not has_cards:
+        print("# 无卡片索引：文档未参与检索（先跑 kb-card.py %s）" % kb_root, file=sys.stderr)
 
     prim, sec = split_query(query)
     terms = prim + sec

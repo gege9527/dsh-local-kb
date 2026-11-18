@@ -37,6 +37,7 @@ const REQUIRED_SKILL_FILES = [
   'skills/local-kb/tools/kb-check.py',
   'skills/local-kb/tools/kb-card.py',
   'skills/local-kb/tools/kb-move-project.py',
+  'skills/local-kb/tools/kb_common.py',
 ]
 for (const rel of REQUIRED_SKILL_FILES) {
   if (!exists(rel)) {
@@ -62,7 +63,9 @@ try {
 }
 if (pkg) {
   const files = Array.isArray(pkg.files) ? pkg.files : []
-  for (const need of ['skills/', 'index.js', 'inject.js', 'migrate.js', 'install-skill.js', 'client.js', 'cordis.patch.yml']) {
+  // 技能按 SKILL.md / references/ / tools/*.py 三条列出（不整目录打包，避免 __pycache__ 混进去）
+  if (!files.some((entry) => entry.startsWith('skills/local-kb/'))) fail('package.json files 缺技能条目')
+  for (const need of ['index.js', 'inject.js', 'migrate.js', 'install-skill.js', 'client.js', 'cordis.patch.yml']) {
     if (!files.includes(need)) fail('package.json files 缺条目：' + need)
   }
   if (failures.length === 0) ok('package.json files 覆盖技能与核心模块')

@@ -169,11 +169,9 @@ check('未绑定项目的主题不列', !mapTopics.includes('docs/Other'), mapTo
 check('relatedDocTopics 命中', relatedDocTopics(root, 'demo').join() === 'DSH', String(relatedDocTopics(root, 'demo')))
 check('relatedDocTopics 无绑定返回空', relatedDocTopics(root, 'nope').length === 0)
 
-// docs/ 根层单篇文档也能在自己的 frontmatter 里声明归属项目
+// docs/ 根层单篇不再支持 projects 声明：主题归属只由 docs/<主题>/_topic.md 表达（D1B1）
 write('docs/single.md', '---\ntitle: 单篇\ntype: doc\nprojects:\n  - demo\n---\n\n正文\n')
-write('docs/other-single.md', '---\ntitle: 其他\nprojects: []\n---\n\n正文\n')
-check('根层单篇能声明归属项目', relatedDocTopics(root, 'demo').includes('single.md'), String(relatedDocTopics(root, 'demo')))
-check('根层未绑定的单篇不列', !relatedDocTopics(root, 'demo').includes('other-single.md'))
+check('根层单篇不参与主题归属', !relatedDocTopics(root, 'demo').includes('single.md'), String(relatedDocTopics(root, 'demo')))
 
 // 已收录关键词：只取短句，过滤自动生成的英文问句
 write('projects/demo/demo.md', [

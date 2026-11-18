@@ -33,8 +33,8 @@ window.__ModuleLoader__.load({
     // factory 级共享：settings.section 槽不支持 inject face（slotInject 为空），
     // 所以 remote 在注册时从 ctx 取好，组件直接引用同一个闭包变量。
     var pluginRemote = null
-    var pluginCtx = null
-    var pluginRemoteReady = false
+    // toast 定时器放组件外：组件重渲染时会重建函数作用域，放里面会清不掉旧定时器
+    var noticeTimer = null
     // 相对路径，与 dsh 自己的页面一致：部署带前缀时也落在同一个 origin 前缀下
     var API_STATE = 'api/local-kb/state'
     var API_SYNC = 'api/local-kb/sync'
@@ -54,15 +54,11 @@ window.__ModuleLoader__.load({
     }
     var T = {
       nav: isZh() ? '知识库' : 'Knowledge Base',
-      sectionTitle: isZh() ? '知识库' : 'Knowledge Base',
       sectionDesc: isZh()
         ? '知识库位置、WebDAV 备份与同步设置。默认不会自动上传，需要你点「上传到云端」。'
         : 'Knowledge base location, WebDAV backup and sync. Nothing uploads automatically by default — use Upload.',
       kbLocation: isZh() ? '知识库位置' : 'Knowledge base location',
       openFolder: isZh() ? '打开文件夹' : 'Open Folder',
-      openVscode: isZh() ? '使用 VSCode 打开' : 'Open in VSCode',
-      vscodeMissing: isZh() ? '未找到 VSCode 应用' : 'VSCode application not found',
-      desktopUnavailable: isZh() ? '当前环境不支持打开本地文件夹' : 'Opening local folders is unavailable in this environment',
       opened: isZh() ? '已打开' : 'Opened',
       openFailed: isZh() ? '打开失败' : 'Open failed',
       notInstalled: isZh() ? '插件内置技能缺失（skills/local-kb/SKILL.md 未找到）' : 'Bundled skill missing (skills/local-kb/SKILL.md not found)',
@@ -111,8 +107,6 @@ window.__ModuleLoader__.load({
       lastFailed: isZh() ? '上次同步失败' : 'Last sync failed',
       // 校验结果（failed/warn）不在设置页展示，故不保留对应文案。
       pushed: isZh() ? '新增/更新 {n} 个文件' : '{n} file(s) pushed',
-      more: isZh() ? '更多打开方式' : 'More open options',
-      openWith: isZh() ? '用 {app} 打开' : 'Open with {app}',
       aboutTitle: isZh() ? '插件说明' : 'About this plugin',
       aboutAutoClean: isZh()
         ? '插件的后台逻辑（同步、提醒、API 路由）随插件禁用或卸载自动注销，不用手动清理。'
@@ -129,8 +123,6 @@ window.__ModuleLoader__.load({
       checkNever: isZh() ? '尚未校验（写入知识库后自动运行）' : 'not checked yet (runs after a KB write)',
       overviewTitle: isZh() ? '知识库内容' : 'What is in the KB',
       loading: isZh() ? '加载中…' : 'Loading…',
-      auto: isZh() ? '自动' : 'auto',
-      manual: isZh() ? '手动' : 'manual'
     }
 
     function fmtTime(iso) {
@@ -171,9 +163,6 @@ window.__ModuleLoader__.load({
     }
 
     /* =====================================================================
-     * Host data (credentials + open path) —— 注入面由 registerSection 提供。
-     * =================================================================== */
-    /* =====================================================================
      * Section component
      * =================================================================== */
     function KnowledgeBaseSection(props) {
@@ -205,43 +194,6 @@ window.__ModuleLoader__.load({
           throw new Error(msg)
         })
       }
-      // ---- open-in-app 应用目录（与官方 APP_LABEL_KEY 一致）----
-      var APP_NAMES = {
-        'cursor': 'Cursor',
-        'vscode': 'VS Code',
-        'vscodeinsiders': 'VS Code Insiders',
-        'windsurf': 'Windsurf',
-        'zed': 'Zed',
-        'sublimetext': 'Sublime Text',
-        'xcode': 'Xcode',
-        'androidstudio': 'Android Studio',
-        'intellij': 'IntelliJ IDEA',
-        'pycharm': 'PyCharm',
-        'webstorm': 'WebStorm',
-        'phpstorm': 'PhpStorm',
-        'goland': 'GoLand',
-        'rider': 'Rider',
-        'rustrover': 'RustRover',
-        'fork': 'Fork',
-        'sourcetree': 'Sourcetree',
-        'github': 'GitHub Desktop',
-        'tower': 'Tower',
-        'gitkraken': 'GitKraken',
-        'smartgit': 'SmartGit',
-        'sublimemerge': 'Sublime Merge',
-        'ghostty': 'Ghostty',
-        'warp': 'Warp',
-        'iterm': 'iTerm2',
-        'kitty': 'kitty',
-        'windowsterminal': 'Windows Terminal',
-        'gitbash': 'Git Bash',
-        'gnometerminal': 'GNOME Terminal',
-        'konsole': 'Konsole',
-        'finder': '访达',
-        'explorer': '文件资源管理器',
-        'filemanager': '文件管理器',
-        'terminal': '终端'
-      }
       function openKbRoot() {
         // 官方 open-in-app/open：用默认应用打开知识库目录（document-relative 路径）
         if (!info || !info.kbRoot) return
@@ -262,7 +214,6 @@ window.__ModuleLoader__.load({
       var [urlConfigured, setUrlConfigured] = useState(false)
       var [busy, setBusy] = useState('')      // '' | 'test' | 'sync' | 'save'
       var [notice, setNotice] = useState(null) // 瞬态 toast：{ kind, text }，自动消失
-      var noticeTimer = null
       function showNotice(kind, text) {
         setNotice({ kind: kind, text: text })
         if (noticeTimer !== null) clearTimeout(noticeTimer)
@@ -294,7 +245,6 @@ window.__ModuleLoader__.load({
       }
 
       function loadCredentials() {
-        if (!describeCredential) return
         // describe 只报 configured 不返回值。已配置：URL/用户名回填可见（用户知道配过），
         // 密码留空 + placeholder 提示「输入新密码以修改」。
         describeCredential(CRED_PASSWORD).then(function (p) { setPwConfigured(!!(p && p.configured)) })
@@ -547,7 +497,6 @@ window.__ModuleLoader__.load({
         checkLine || h('span', null, T.checkNever),
         warnEls.length > 0 ? warnEls : null)
 
-
       // 知识库概览：只报规模，明细看注入的地图与记忆索引
       var overviewCard = null
       if (overview) {
@@ -620,12 +569,10 @@ window.__ModuleLoader__.load({
     function registerSection(ctx) {
       // inject 声明了 'remote' / 'remote.credentials'，这里 ctx.remote 可直接访问
       // （不会再被 Proxy 拦截）。捕获到闭包，组件直接引用，不再每次现取。
-      pluginCtx = ctx
       try {
         // inject 声明了 'remote'：ctx.remote 直接属性访问（不走 ctx.get 的 Proxy 拦截）。
         pluginRemote = ctx.remote || null
         if (pluginRemote && pluginRemote.credentials) {
-          pluginRemoteReady = true
         }
       } catch (e) { pluginRemote = null }
       ctx.slots.inject('settings.section', function () {

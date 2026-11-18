@@ -47,7 +47,10 @@ for (const section of ['## 操作边界', '## 能力边界', '## 检索方式', 
 // 3. 项目页模板不再要求引擎字段
 const tpl = read(path.join(skillDir, 'references', 'templates.md'))
 check('templates 无 engines 字段', !/^engines:/m.test(tpl), '仍含 engines:')
-check('templates 查询段先 kb-search 再 grep', tpl.includes('kb-search.py') && tpl.includes('grep -rn'))
+// 查询命令收进常驻规则（每轮注入）：模板不再要求项目页内嵌命令。
+const snippetText = read(path.join(skillDir, 'references', 'agents-snippet.md'))
+check('常驻规则含两段检索命令', snippetText.includes('kb-search.py') && snippetText.includes('grep -rn'), '规则缺 kb-search 或源码 grep')
+check('项目页模板不再内嵌查询命令', !tpl.includes('## 怎么查这个项目'))
 
 // 4. 常驻块只保留起止标记（版本标记已移除：比较逻辑早就换成内容相等）
 const snippet = read(path.join(skillDir, 'references', 'agents-snippet.md'))

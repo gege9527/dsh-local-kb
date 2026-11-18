@@ -13,58 +13,11 @@ import os
 import re
 import sys
 
-CARD_DIR = ".kb-index/cards"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_common import CARD_DIR, CARD_VERSION, frontmatter, iter_docs, read_version, slug_of, version_path
+
 SUMMARY_CHARS = 200
 SUMMARY_MIN = 40  # 摘要短于此值时继续累加后续段落（引用块开头的文档常只剩"行记录"这种残句）
-SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
-CARD_VERSION = 3  # 3 = 摘要回退链（frontmatter summary→引用块→段落累加），检索端靠它判断整库重建
-VERSION_FILE = ".card-version"
-
-
-def version_path(cards_dir):
-    """版本文件放 cards/ 的父目录：cards/ 只放卡片，列目录时不会被当成孤儿。"""
-    return os.path.join(os.path.dirname(cards_dir), VERSION_FILE)
-
-
-def read_version(cards_dir):
-    """读卡片格式版本；没有文件或读不懂都当 0（触发一次重建成当前版本）。"""
-    try:
-        with open(version_path(cards_dir), encoding="utf-8") as fh:
-            return int(fh.read().strip() or 0)
-    except (OSError, ValueError):
-        return 0
-
-
-def frontmatter(text):
-    if not text.startswith("---"):
-        return {}, text
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}, text
-    block = text[3:end]
-    lines = block.split("\n")
-    meta = {}
-    i = 0
-    while i < len(lines):
-        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", lines[i])
-        if m is None:
-            i += 1
-            continue
-        key, raw = m.group(1), m.group(2).strip()
-        # YAML 块标量（>- / | 等）：把后续缩进行拼成一行，否则 summary/description
-        # 会被读成字面量 ">-"，卡片摘要就只剩这个符号。
-        if raw in (">", ">-", ">+", "|", "|-", "|+"):
-            folded = []
-            i += 1
-            while i < len(lines) and (lines[i].strip() == "" or lines[i].startswith((" ", "\t"))):
-                if lines[i].strip():
-                    folded.append(lines[i].strip())
-                i += 1
-            meta[key] = " ".join(folded)
-            continue
-        meta[key] = raw.strip('"').strip("'")
-        i += 1
-    return meta, text[end + 4:]
 
 
 QUOTE_META = re.compile(r"^\*\*[^*]{1,24}\*\*[:：]?")
@@ -122,31 +75,12 @@ def sections(body, offset):
     for i, line in enumerate(body.split("\n")):
         m = re.match(r"^##\s+(.+?)\s*$", line)
         if m:
-            out.append((m.group(1), offset + i + 1))
+            # offset 已是 body 第一行的真实行号，不要再 +1（旧实现多算一行）
+            out.append((m.group(1), offset + i))
     return out
 
 
-def slug_of(rel):
-    stem = rel[:-3] if rel.endswith(".md") else rel
-    return re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]+", "-", stem).strip("-")
 
-
-def iter_docs(kb_root):
-    for base in ("docs", "projects"):
-        root = os.path.join(kb_root, base)
-        if not os.path.isdir(root):
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            for name in filenames:
-                if not name.endswith(".md") or name in ("MEMORY.md", "_topic.md"):
-                    continue
-                full = os.path.join(dirpath, name)
-                rel = os.path.relpath(full, kb_root)
-                # 记忆不生成卡片（本身是索引）；项目页要生成，否则搜不到「某项目是干嘛的」
-                if base == "projects" and "/memory/" in rel:
-                    continue
-                yield rel, full
 
 
 def read_aliases(text):
@@ -172,7 +106,7 @@ def read_aliases(text):
 
 
 def build_card(kb_root, rel, full):
-    text = open(full, encoding="utf-8").read()
+    text = open(full, encoding="utf-8", errors="replace").read()
     meta, body = frontmatter(text)
     offset = text[: len(text) - len(body)].count("\n") + 1
     title = meta.get("title", "").strip('"') or os.path.basename(rel)[:-3]
@@ -217,31 +151,39 @@ def main(argv):
     kb_root = os.path.expanduser(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "~/.local-kb")
     check_only = "--check" in argv
     prune = "--prune" in argv
+    force = "--force" in argv
     out_dir = os.path.join(kb_root, CARD_DIR)
+    full_rebuild = force or read_version(out_dir) != CARD_VERSION
     count = 0
+    missing = 0
     stale = 0
     written = 0
     expected = set()
     for rel, full in iter_docs(kb_root):
         count += 1
-        expected.add(slug_of(rel) + ".md")
-        card = build_card(kb_root, rel, full)
+        slug = slug_of(rel) + ".md"
+        expected.add(slug)
+        path = os.path.join(out_dir, slug)
+        # 增量：卡片不存在、比源文档旧、或格式版本变了才重写（旧实现每次全量重写 447 篇）。
+        need = full_rebuild or not os.path.exists(path) or os.path.getmtime(path) < os.path.getmtime(full)
         if check_only:
-            path = os.path.join(out_dir, slug_of(rel) + ".md")
             if not os.path.exists(path):
+                missing += 1
+            elif need:
                 stale += 1
             continue
+        if not need:
+            continue
         os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, slug_of(rel) + ".md")
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(card)
+            fh.write(build_card(kb_root, rel, full))
         written += 1
     if check_only:
         if read_version(out_dir) != CARD_VERSION:
             print("文档 %d，卡片版本需重建（当前 %s，期望 %d）" % (count, read_version(out_dir), CARD_VERSION))
             sys.exit(1)
-        print("文档 %d，缺卡 %d" % (count, stale))
-        sys.exit(1 if stale else 0)
+        print("文档 %d，缺卡 %d，过期 %d" % (count, missing, stale))
+        sys.exit(1 if (missing or stale) else 0)
     removed = 0
     if prune and os.path.isdir(out_dir):
         for name in os.listdir(out_dir):

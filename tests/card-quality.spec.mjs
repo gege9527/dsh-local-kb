@@ -103,9 +103,9 @@ const constOf = (name) => {
   const m = readSrc(name).match(/^CARD_VERSION = (\d+)/m)
   return m === null ? null : Number(m[1])
 }
-const cardVer = constOf('kb-card.py')
-const searchVer = constOf('kb-search.py')
-check('kb-card 与 kb-search 的 CARD_VERSION 一致', cardVer !== null && cardVer === searchVer, `${cardVer} vs ${searchVer}`)
+const commonVer = constOf('kb_common.py')
+check('CARD_VERSION 只在 kb_common 定义', commonVer !== null && constOf('kb-card.py') === null && constOf('kb-search.py') === null, String(commonVer))
+check('kb-card / kb-search 共用 kb_common', readSrc('kb-card.py').includes('from kb_common import') && readSrc('kb-search.py').includes('from kb_common import'))
 
 // 6) 版本不符时的提示必须说清「整库重建」，不能谎称「过期 N 篇」
 const verRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-ver-'))

@@ -14,6 +14,12 @@
 3. **W 直接搜**（给了路径/项目名/网址，或公共知识/外部事实）→ 直接搜，不查 KB；`find` 找文件、
    读已知路径文件也永不先查 KB。
 
+**查源码**（已定位到项目后）：`grep -rn "<关键词>" "<项目路径>" --include="*.js" --include="*.ts" --include="*.py" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=out --exclude-dir=coverage`；
+按项目语言增删 `--include`；知识地图若给出「查源码：根/排除/跨项目」，以它为准。
+
+**文档时效**：引用文档按本地快照回答，不自动回源；`date_added`（或 `last_checked`）超过 90 天，
+只说「可能过时；要核对说『刷新这篇』」，绝不自己抓网站。
+
 问候/致谢/反应不开启任务；任务 = 用户指派、可能依赖 KB 的工作（只读分析诊断也算）；不确定就当任务。
 
 ### 记忆召回

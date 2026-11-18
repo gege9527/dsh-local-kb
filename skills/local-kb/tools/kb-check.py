@@ -21,6 +21,7 @@
     项目页 存在 / 含 project_id / 无 project_path / 有资料时含「项目资料」节
     路径  paths.yaml 条目格式 / id 重复 / id 与「最短唯一路径后缀」规则不符
 """
+import datetime
 import json
 import os
 import re
@@ -44,7 +45,8 @@ errors, warns = [], []
 
 def read(p):
     try:
-        with open(p, encoding="utf-8") as f:
+        # 单篇坏编码（GBK 文档）不该让整次体检崩掉
+        with open(p, encoding="utf-8", errors="replace") as f:
             return f.read()
     except Exception:
         return ""
@@ -189,20 +191,32 @@ def run_fix(write):
         idx, plan = got
         rel_d = os.path.relpath(d, KB)
         text = idx
-        for f, type_, status, section in plan:
+        applied = []
+        for f, type_, status, _ in plan:
             line_text = "- [%s](%s)" % (f[:-3], f)
+            # 逐条重算落点：同一批里前一条新建的小节，后一条必须能看见（旧实现会建两个 ## type）
+            section = pick_section(text, type_, status)
             if section is not None:
                 text = append_pointer(text, section, line_text)
             elif type_:
                 text = append_section(text, type_, line_text)
-                section = "+" + type_
+                section = type_
                 warns.append("未见 ## %s 小节，已新建该小节放入指针: %s/%s" % (type_, rel_d, f))
             else:
                 text = append_pointer(text, None, line_text)
+            applied.append((f, section))
         if write:
-            with open(os.path.join(d, "MEMORY.md"), "w", encoding="utf-8") as out:
-                out.write(text)
-        report.append((rel_d, [(f, section) for f, _, _, section in plan]))
+            idx_path = os.path.join(d, "MEMORY.md")
+            # read() 做了通用换行转换；写回时保持原文件的行尾风格（CRLF 别被改成 LF）
+            try:
+                with open(idx_path, "rb") as fh:
+                    crlf = b"\r\n" in fh.read()
+            except OSError:
+                crlf = False
+            out_text = text.replace("\n", "\r\n") if crlf else text
+            with open(idx_path, "w", encoding="utf-8", newline="") as out:
+                out.write(out_text)
+        report.append((rel_d, applied))
     return report
 
 
@@ -228,6 +242,26 @@ def check_index_groups(rel_d, idx, statuses):
             errors.append("status: %s 的笔记不在索引 ## %s 段: %s/%s" % (st, st, rel_d, f))
 
 
+def project_source_paths():
+    """paths.yaml 的 项目 id → 本机源码路径（记忆里的相对路径可能指向源码，不只是 KB 内文件）。"""
+    out = {}
+    yp = os.path.join(KB, "paths.yaml")
+    try:
+        cur = None
+        for line in read(yp).splitlines():
+            m = re.match(r"^([A-Za-z0-9_" + CJK + r"][\w" + CJK + r"-]*):\s*$", line)
+            if m:
+                cur = m.group(1)
+                continue
+            pm = re.match(r"^\s+path:\s*(.+?)\s*$", line)
+            if pm and cur:
+                out[cur] = pm.group(1).strip("'\"")
+                cur = None
+    except OSError:
+        return {}
+    return out
+
+
 def check_memory_dir(d):
     idx_path = os.path.join(d, "MEMORY.md")
     rel_d = os.path.relpath(d, KB)
@@ -235,7 +269,7 @@ def check_memory_dir(d):
         errors.append("记忆目录缺 MEMORY.md: %s" % rel_d)
         return 0
     idx = read(idx_path)
-    idx_lines = idx.count("\n") + 1
+    idx_lines = len(idx.rstrip("\n").split("\n"))
     idx_bytes = len(idx.encode("utf-8"))
     if idx_lines > HARD_LINES or idx_bytes > HARD_KB * 1024:
         errors.append("记忆索引超硬上限(%d 行/%d B，限 %d/%dKB): %s —— 先压缩再追加" % (idx_lines, idx_bytes, HARD_LINES, HARD_KB, rel_d))
@@ -283,12 +317,28 @@ def check_memory_dir(d):
             if not re.search(r"^> .*(?:截至|Superseded)", body_txt, re.M):
                 warns.append("记忆含未标注的时效性内容(待办/进行中，缺历史化标注): %s" % rel)
         body = text.split("---", 2)[-1]
-        for m in re.finditer(r"`([w./-]+/[w./-]+\.(?:md|json|py|js|ts))`", body):
+        # 项目记忆里的相对路径按项目根解析，全局记忆按 KB 根；两处都不在才报失效。
+        base_dir = KB if rel_d == "memory" else os.path.join(KB, "projects", rel_d.split(os.sep)[1])
+        for m in re.finditer(r"`([^`\n]+\.(?:md|json|py|js|ts))`", body):
             ref = m.group(1)
-            if ref.startswith(("http", "/")):
+            if ref.startswith(("http", "/")) or "/" not in ref:
                 continue
-            if not os.path.exists(os.path.join(PROJECT_ROOT_ROOT, ref)):
-                warns.append("记忆引用路径可能已失效(%s): %s" % (ref, rel))
+            # 通配符、占位符、命令行（含空格）都不是「这条路径现在应存在」的断言，跳过。
+            if any(ch in ref for ch in "<>*?$| \t…") or "..." in ref:
+                continue
+            # 只校验 KB 命名空间内的引用；记忆里大量源码仓库路径（web/src/x.js）不在 KB 管辖内。
+            if ref.split("/")[0] not in ("projects", "docs", "memory", "archive"):
+                continue
+            pid = None if rel_d == "memory" else rel_d.split(os.sep)[1]
+            candidates = [
+                os.path.normpath(os.path.join(d, ref)),   # 相对记忆目录（含 ../docs/…）
+                os.path.join(KB, ref),
+                os.path.join(base_dir, ref),
+            ]
+            if pid and SRC_PATHS.get(pid):
+                candidates.append(os.path.join(SRC_PATHS[pid], ref))
+            if not any(os.path.exists(c) for c in candidates):
+                mem_ref_missing.append("%s ← %s" % (ref, rel))
         if not indexed(idx, f):
             errors.append("记忆未被索引: %s" % rel)
     if rel_d == "memory" and active_count:
@@ -310,9 +360,13 @@ def check_memory_dir(d):
 # 逐条 warn 会把真正的错误淹没、让每次自检都变红。这里累计，最后汇总成一条。
 doc_no_h2 = 0
 doc_big = 0
+doc_stale = 0
+# 记忆里引用的源码/文档路径失效：逐条会命中数百条历史路径，汇总成一条（与内容下限同一处理）。
+mem_ref_missing = []
 
 
 def check_doc(p, project_doc=False):
+    global doc_no_h2, doc_big, doc_stale
     # 主题自描述与索引类文件不是文档正文，单独校验
     if os.path.basename(p) in ("_topic.md", "_projects.md"):
         return
@@ -330,11 +384,24 @@ def check_doc(p, project_doc=False):
             warns.append("文档缺 source: %s" % rel)
         if not field(fm, "date_added"):
             warns.append("文档缺 date_added: %s" % rel)
+        for key in ("date_added", "date_updated", "last_checked"):
+            val = field(fm, key)
+            if val and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(val).strip().strip('"')):
+                warns.append("文档 %s 不是 YYYY-MM-DD: %s" % (key, rel))
+        # 快照年龄：只统计抓来的文档（projects/<id>/docs/ 是自产分析，没有回源概念）
+        if not project_doc:
+            src = str(field(fm, "source") or "")
+            base = str(field(fm, "last_checked") or field(fm, "date_added") or "").strip().strip('"')
+            if src.startswith(("http://", "https://")) and base:
+                try:
+                    if (datetime.date.today() - datetime.date.fromisoformat(base)).days > 365:
+                        doc_stale += 1
+                except ValueError:
+                    pass
     # 结构完整性：长文却没有二级标题，等于整篇平铺，AI 只能从头读到尾
     body = re.sub(r"(?s)^---.*?---", "", text, count=1)
     plain = re.sub(r"\s", "", body)
     h2 = len(re.findall(r"(?m)^## ", text))
-    global doc_no_h2, doc_big
     # 只查自产文档（projects/<id>/docs/）。docs/ 下是抓来的原文——书稿一章 271KB、
     # 官方语法参考 209KB 都是源头决定的，加 H2 或拆分反而破坏与源的对应关系，不该报。
     if project_doc:
@@ -357,6 +424,7 @@ JSON_MODE = "--json" in sys.argv[1:]
 FIX_MODE = "--fix" in sys.argv[1:]
 WRITE_MODE = "--write" in sys.argv[1:]
 KB = os.path.abspath(os.path.expanduser(ARGV[0] if ARGV else "~/.local-kb"))
+SRC_PATHS = project_source_paths()
 PROJECT_ROOT_ROOT = os.path.join(KB, "projects")
 GLOBAL_MEM_ROOT = os.path.join(KB, "memory")
 if not os.path.isdir(KB):
@@ -405,7 +473,7 @@ docs_root = os.path.join(KB, "docs")
 doc_total = 0
 if os.path.isdir(docs_root):
     for p in walk_md(docs_root):
-        check_doc(p, os.sep + "projects" + os.sep in p)
+        check_doc(p, False)  # docs/ 下是抓来的原文，不做自产文档的内容下限检查
         doc_total += 1
 proj_doc_total = 0
 if os.path.isdir(PROJECT_ROOT_ROOT):
@@ -417,7 +485,6 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
                 proj_doc_total += 1
 
 # 项目页
-page_errors = 0
 page_what_short = []
 page_tree_one = []
 page_files_empty = []
@@ -429,24 +496,15 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
         page = os.path.join(dd, d + ".md")
         if not os.path.exists(page):
             errors.append("项目页缺失: projects/%s/%s.md" % (d, d))
-            page_errors += 1
             continue
         text = read(page)
         if re.search(r"^project_path:", text, re.M):
             errors.append("项目页残留 project_path: projects/%s" % d)
         if not re.search(r"^project_id:", text, re.M):
             errors.append("项目页缺 project_id: projects/%s" % d)
-        has_material = os.path.isdir(os.path.join(dd, "arch")) or os.path.isdir(os.path.join(dd, "docs")) or os.path.isdir(os.path.join(dd, "memory"))
+        has_material = os.path.isdir(os.path.join(dd, "docs")) or os.path.isdir(os.path.join(dd, "memory"))
         if has_material and "项目资料" not in text:
             warns.append("项目页缺「项目资料」节: projects/%s" % d)
-        # 项目页「怎么查」的源码 grep 必须带 --exclude-dir：不带会扫进 node_modules，
-        # 实测 8.6 万文件的 monorepo 是 27s / 337K 行，排除后 4.7s / 38K 行
-        query_sec = re.search(r"(?ms)^## 怎么查这个项目\n(.*?)(?=^## |\Z)", text)
-        if query_sec is not None:
-            for line in query_sec.group(1).split("\n"):
-                if line.lstrip().startswith("grep -rn") and "--exclude-dir" not in line:
-                    warns.append("项目页源码搜索缺 --exclude-dir（会扫进 node_modules）: projects/%s" % d)
-                    break
         # 概念表：inject 的「已收录」只读这张表，空表等于该项目每轮都拿不到提示
         concept = re.search(r"^## 中文概念[^\n]*\n([\s\S]*?)(?=^## |\Z)", text, re.M)
         if concept is not None:
@@ -473,7 +531,7 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
         if files is not None:
             body = files.group(1)
             rows = [x for x in body.split("\n")
-                    if (x.startswith("|") and "---" not in x and "文件" not in x)
+                    if (x.startswith("|") and "---" not in x and not re.match(r"^\|\s*文件", x))
                     or x.lstrip().startswith(("- ", "* "))]
             if len(rows) == 0:
                 page_files_empty.append(d)
@@ -482,7 +540,7 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
         if material is not None:
             for target in re.findall(r"`([^`]+\.md)`", material.group(1)):
                 # 只校验 KB 内约定目录：裸文件名可能指源码项目的 README，不该当死链
-                if broken_pointer(target) or not target.startswith(("docs/", "memory/", "arch/", "assets/")):
+                if broken_pointer(target) or not target.startswith(("docs/", "memory/", "assets/")):
                     continue
                 if not os.path.exists(os.path.join(dd, target)):
                     errors.append("项目资料死链: projects/%s → %s" % (d, target))
@@ -501,6 +559,11 @@ if doc_no_h2:
     warns.append("文档无二级标题且正文 >2000 字 %d 篇（建议分节）" % doc_no_h2)
 if doc_big:
     warns.append("文档 >40KB %d 篇（建议按主题拆）" % doc_big)
+if doc_stale:
+    warns.append("文档快照超过 365 天未核对 %d 篇（查询时只提示过时；更新需显式说「刷新这篇」）" % doc_stale)
+if mem_ref_missing:
+    warns.append("记忆引用的路径可能已失效 %d 处（历史迁移/源码改动后常见；核对后改引用）：%s"
+                 % (len(mem_ref_missing), "；".join(mem_ref_missing[:6])))
 
 # paths.yaml
 yp = os.path.join(KB, "paths.yaml")
@@ -548,20 +611,63 @@ if path_entries:
         errors.append("项目 id 与路径不符 %d 个（跑 kb-move-project.py --scan 同步）: %s"
                       % (len(wrong), "、".join(wrong[:6])))
 
+# 项目页查询例外：默认命令在常驻规则里，页面只写差异（search_roots / search_exclude / search_projects）。
+# 旧版整段「怎么查这个项目」与未替换占位符都不再接受。
+proj_paths = dict(path_entries)
+
+
+def inline_list(text, key):
+    m = re.search(r"^" + key + r":\s*\[([^\]]*)\]\s*$", text, re.M)
+    if m is None:
+        return None
+    return [x.strip().strip("'\"") for x in m.group(1).split(",") if x.strip()]
+
+
+project_dirs = sorted(os.listdir(PROJECT_ROOT_ROOT)) if os.path.isdir(PROJECT_ROOT_ROOT) else []
+for d in project_dirs:
+    page = os.path.join(PROJECT_ROOT_ROOT, d, d + ".md")
+    if not os.path.isfile(page):
+        continue
+    text = read(page)
+    roots = inline_list(text, "search_roots")
+    excludes = inline_list(text, "search_exclude")
+    projects = inline_list(text, "search_projects")
+    base = proj_paths.get(d)
+    for r in roots or []:
+        if r.startswith("/") or ".." in r.split("/"):
+            errors.append("search_roots 必须是项目内相对路径: projects/%s → %s" % (d, r))
+        elif base and os.path.isdir(base) and not os.path.isdir(os.path.join(base, r)):
+            warns.append("search_roots 指向不存在的目录: projects/%s → %s" % (d, r))
+    for r in excludes or []:
+        if r == "" or r.startswith("/") or "/" in r or ".." in r:
+            errors.append("search_exclude 只接受目录名: projects/%s → %r" % (d, r))
+    if projects and known_projects:
+        for pid in projects:
+            if pid not in known_projects:
+                warns.append("search_projects 引用未登记项目 %s: projects/%s" % (pid, d))
+    if "## 怎么查这个项目" in text:
+        warns.append("项目页仍有「怎么查这个项目」旧样板（命令已收进常驻规则）: projects/%s" % d)
+    for ph in ("<技能目录>", "<中文关键词>", "<本机路径>"):
+        if ph in text:
+            warns.append("项目页含未替换占位符 %s: projects/%s" % (ph, d))
+
 # 文档主题自描述：docs/<主题>/_topic.md 的 projects 必须已登记
-topic_total = 0
 if os.path.isdir(docs_root):
     for d in sorted(os.listdir(docs_root)):
         if not os.path.isdir(os.path.join(docs_root, d)):
             continue
         tfile = os.path.join(docs_root, d, "_topic.md")
         if not os.path.exists(tfile):
+            doc_count = 0
+            for dp, dns, fns in os.walk(os.path.join(docs_root, d)):
+                dns[:] = [x for x in dns if x not in ("assets", "archive")]
+                doc_count += len([f for f in fns if f.endswith(".md")])
+            if doc_count >= 2:
+                warns.append("文档集缺 _topic.md（%d 篇）: docs/%s" % (doc_count, d))
             continue
-        topic_total += 1
         text = read(tfile)
-        # title: 是存量写法（模板早年没定义这个文件），两种都接受
-        if not re.search(r"^(?:topic|title):\s*\S", text, re.M):
-            warns.append("_topic.md 缺 topic/title 字段: docs/%s" % d)
+        if not re.search(r"^topic:\s*\S", text, re.M):
+            warns.append("_topic.md 缺 topic 字段（title 已不再接受）: docs/%s" % d)
         block = re.search(r"^projects:\s*\n((?:\s+-\s+.*\n?)*)", text, re.M)
         if block is not None:
             for pid in re.findall(r"^\s+-\s+(\S+)", block.group(1), re.M):

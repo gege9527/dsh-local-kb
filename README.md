@@ -6,7 +6,7 @@
 AI 每轮记得你的项目与结论 · 写入有护栏 · 一键备份到 WebDAV</p>
 
 <p>
-<a href="CHANGELOG.md"><img alt="version" src="https://img.shields.io/badge/version-0.5.0-blue"></a>
+<a href="CHANGELOG.md"><img alt="version" src="https://img.shields.io/badge/version-0.6.0-blue"></a>
 <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
 <img alt="node" src="https://img.shields.io/badge/node-%3E%3D18-339933">
 <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0%20~%200.2.x-6366f1">
@@ -168,7 +168,7 @@ AI 每次开始工作，都会看到全局记忆索引、当前项目（含父�
 ### 同步什么
 
 - **同步**：`docs/`、`projects/`（记忆、项目页、归档）、`memory/`、`README.md`、`paths.yaml`
-- **不同步**：系统垃圾文件、卡片索引（生成物）、同步状态文件
+- **不同步**：系统垃圾文件、卡片索引（生成物）、同步状态文件、`.backup/`（改名前的整库快照，只用于本地回滚）
 - **增量**：只传变化的文件；本地没改动时连远端都不扫
 - **远端目录**：默认 `local-kb-sync`，可改成多级路径
 
@@ -195,7 +195,7 @@ AI 每次开始工作，都会看到全局记忆索引、当前项目（含父�
 
 | 区域 | 内容 |
 |---|---|
-| 知识库位置 | 显示实际路径，打开文件夹 / 打开 VSCode |
+| 知识库位置 | 显示实际路径，用系统文件管理器打开 |
 | 知识库内容 | 项目数、文档数、每个项目的记忆条数与索引行数、路径是否有效 |
 | WebDAV 备份 | 地址、用户名、密码、远程根目录、自动同步开关 |
 | 操作 | 保存配置、测试链接、清除配置、上传到云端、从云端下载 |
@@ -224,7 +224,6 @@ AI 每次开始工作，都会看到全局记忆索引、当前项目（含父�
 ├── projects/
 │   └── <project_id>/
 │       ├── <project_id>.md        项目主页（概览、状态、概念表）
-│       ├── arch/                  架构摘要
 │       ├── docs/                  项目产出文档
 │       └── memory/
 │           ├── MEMORY.md          项目记忆索引
@@ -253,6 +252,9 @@ python3 skills/local-kb/tools/kb-move-project.py ~/.local-kb --apply --plan /tmp
 ```
 
 它会更新路径与项目 ID、改目录与项目页、替换全库引用、清理孤儿卡片、跑体检；执行前自动备份。
+
+`--apply` 默认不改正文里的裸 id（短 id 会误伤普通用词与源码路径）：命中时会列出文件与行号并拒绝，
+确认后加 `--allow-body-rewrite` 再执行。
 
 ---
 
@@ -452,10 +454,11 @@ node install-skill.js --uninstall
 
 ## 版本与兼容
 
-当前版本 `0.5.0`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本 `0.6.0`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 版本 | 主题 |
 |---|---|
+| 0.6.0 | 卡片 v4 与共享模块、查询命令收敛、回源按时间、kb-move 安全开关、死代码与打包清理 |
 | 0.5.0 | 技能随插件加载、规则注入、旧安装迁移、体检与上传解耦、发布前校验 |
 | 0.4.0 | 卡片摘要回退、孤儿卡片清理、置信分级修正、安装器幂等 |
 | 0.3.0 | 检索别名层与置信分级；卡片格式 v2 |

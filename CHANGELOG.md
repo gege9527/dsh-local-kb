@@ -1,6 +1,62 @@
 # Changelog
 
-## 未发布
+## 0.6.0 — 2026-11-18
+
+### 卡片与检索
+
+- **卡片行号修正**：`kb-card.py` 的小节行号整体多算 1（实测卡片 L26 / 源文件 L25），
+  按行号读原文会偏一行；修正后重建全部卡片，抽查与源文件一致。
+- **共享模块**：新增 `skills/local-kb/tools/kb_common.py`（frontmatter / slug / iter_docs /
+  卡片版本），`kb-card.py` 与 `kb-search.py` 不再各写一份，避免再次分叉。
+- **卡片 v4**：`frontmatter` 支持多行 `tags`，卡片恢复 `## 标签` 段（446 篇有标签的文档）；
+  `CARD_VERSION` 升到 4，检索端自动整库重建一次。
+- **增量写卡**：`kb-card.py` 只重写「缺卡 / 比源文件旧 / 版本不符」的卡片（二次运行 0 写入）；
+  `--check` 同时报告缺卡与过期；`--force` 强制整库重建。
+- **检索参数与降级**：`kb-search.py` 修正 `--limit N` 省略 KB_ROOT 时把 N 当库根的问题；
+  `--explain` 写进用法；卡片重建失败不再谎报成功；**无卡片索引时明确提示「文档未参与检索」**；
+  非 UTF-8 文档不再让检索/建卡崩溃。
+
+### 项目页与文档协议
+
+- **查询命令收敛**：默认源码 grep 命令收进常驻规则 `agents-snippet.md`（每轮注入），项目页不再写
+  整段命令；项目例外改用 frontmatter `search_roots / search_exclude / search_projects`，
+  由 inject 每轮带出（ad-manager、diplay-work、excel-designer 已配置）。34 个项目页迁移，
+  合计 **84,754 → 65,893 字节（−22.2%）**，占位符 `<技能目录>` 一类清零。
+- **`_topic.md` 规范**：7 份统一 `topic:` 字段、删除正文对 frontmatter 的复述；`kb-check`
+  要求「≥2 篇文档的目录必须有 `_topic.md`」且只认 `topic:`；移除 `docs/根层单篇` 的 projects 分支。
+- **回源按时间**：不再用版本号判断。`age = 今天 − (last_checked || date_added)`，≥90 天只提示
+  「可能过时，要核对说『刷新这篇』」；查询不联网，只有显式指令才抓取，抓取后先给 diff、
+  覆写前把旧版移入 `archive/docs/`；`source` 非 URL 的文档标注「无更新来源」。
+- **数据修正**：3 处记忆条数、n1 死链、diplay-work 项目 ID、dsh-plugins 描述、wx 4 条路径；
+  oa-ai 桥接说明按实际文件 `bridge-sdk.js`（宿主 `parent` / iframe 两用）合并。
+
+### kb-move 安全化
+
+- 正文里的裸 id 默认**不**替换（短 id 会误伤普通用词与源码路径）：命中时列出行号并拒绝，
+  显式 `--allow-body-rewrite` 才改。
+- `title` 只在等于旧 id（或为空）时才改，不再覆盖人类可读标题；`path_old` 记录修正；
+  备份同名自动加序号；rename 失败回滚；后置 kb-card/kb-check 失败返回非 0；全库 md 只读一遍。
+
+### 体检、同步与设置页
+
+- **kb-check**：修复永远不触发的「记忆引用路径失效」检查（正则漏 `\`、基准目录错），
+  只校验 KB 命名空间内的引用并聚合成一条；`--fix` 逐条重算落点，避免重复建 `## type` 小节；
+  新增日期格式与 >365 天快照汇总；`--fix` 写回保留 CRLF；清理死变量与行数 off-by-one。
+- **同步**：`SYNC_EXCLUDE` 增加 `^\.backup/`（改名快照只用于本地回滚），README 同步范围同步更新。
+- **设置页**：`/state` 补 `lastCheckStats` / `lastCheckWarns`（体检统计与警告不再永远空白）；
+  client 死代码清理（`APP_NAMES`、未用 i18n 键等，−5.4KB）；toast 定时器移到组件外。
+
+### 打包与清理
+
+- `package.json` 的 `files` 改为细粒度技能条目，npm 包不再带 `__pycache__`（24 文件）；
+  发布前校验清单加入 `kb_common.py`；删除指向不存在文件的 `test:agents`。
+- 删除一次性脚本 `scripts/kb-migrate.py`（会写回旧样板）；README 移除不存在的「打开 VSCode」
+  与 `arch/` 结构；若干文档与实现对齐（`--explain`、低置信文案、`记忆索引` 标题、中文 id 规则）。
+- 测试：431 条断言全部通过，新增卡片行号、kb-move 安全开关与移动路径、备份不同步、
+  state 体检字段、卡片版本哨兵等覆盖。
+
+### 既有未发布变更
+
 
 - **中文命名合法化**：规范统一为「中文目录 / 文件名 / 路径合法，存量中文名不改」——
   `SKILL.md` 结构节、`references/code-project.md`（id 规则与检查清单）、`references/doc-import.md`

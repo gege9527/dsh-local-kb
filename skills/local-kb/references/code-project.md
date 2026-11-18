@@ -26,6 +26,9 @@ python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --from-path <旧路径
 python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb-move.json
 ```
 
+`--apply` 默认只改路径引用与结构字段；若正文里还有裸 id（短 id 会误伤普通用词与源码路径），
+它会列出行号并拒绝执行。确认要一起改时再加 `--allow-body-rewrite`。
+
 工具会更新 `paths.yaml` 的 path 与 id、改 `projects/<id>/` 目录与项目页文件名、改项目页 frontmatter、
 替换全库 `projects/<旧 id>/` 引用、prune 卡片并跑一次 kb-check；执行前自动备份到 `<KB_ROOT>/.backup/`。
 **禁止只手改 `paths.yaml`**：那样 id 与目录名会漂移，kb-check 会报「项目 id 与路径不符」。
@@ -91,7 +94,7 @@ python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb
 - [ ] `title` 项目名 / `type`: `code-project`
 - [ ] `description`：一句话，非空，不重复项目名
 - [ ] `aliases`：中文别名数组
-- [ ] `project_id`：kebab-case 稳定 ID（中文目录原样保留；与 paths.yaml 一致）
+- [ ] `project_id`：kebab-case（中文目录原样保留，不算违反规则）；与 paths.yaml 一致
 - [ ] `git_remote`：remote 或 `none`
 - [ ] 概念→位置表每条已验证命中，且注明了「验证：读文件」
 - [ ] 关键文件表只列入口文件与 README 点名的文件，不列全量符号
@@ -127,17 +130,18 @@ skipped projects/oa-ai（同 git_remote 已登记，属刷新范围）
 
 「什么都没写」也是合法结果——说明跳过原因即可。
 
-## 定位时的现查命令（写入项目页「怎么查」）
+## 查询命令写在哪（不要写进项目页）
 
-```bash
-# 1. 先查知识库（带置信分级，弱结果会告警，别直接当答案）
-python3 <技能目录>/tools/kb-search.py "<中文关键词>"
+默认查询命令在常驻规则 `references/agents-snippet.md`，每轮注入；`kb-search.py` 路径由知识地图给出。
+**项目页只写例外**，放 frontmatter，inject 每轮带出：
 
-# 2. 再查源码（本机路径从 paths.yaml 取；必须排除依赖与构建产物，否则会扫进 node_modules）
-grep -rn "<中文关键词>" "<本机路径>" --include="*.js" --include="*.ts" --include="*.py" --include="*.java" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target
-
-# 3. 命中后读文件确认行号，再决定是否更新概念表
+```yaml
+search_roots: [geely]                    # 只在这个子目录里搜（默认项目根）
+search_exclude: [bak, apk, decoded]      # 追加到默认排除集
+search_projects: [ezplatform-base-web]   # 要一起搜的其他项目 id
 ```
+
+默认排除集：`.git node_modules dist build target out coverage`。没有例外就不写这三个字段。
 
 **查询路径（中文定位）**：
 1. 查项目页「中文概念 → 位置」表

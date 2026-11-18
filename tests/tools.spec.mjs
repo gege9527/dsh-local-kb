@@ -58,14 +58,14 @@ check('记忆不生成卡片', !cards.some((n) => n.includes('MEMORY')), cards.j
 const card = fs.readFileSync(path.join(kb, '.kb-index', 'cards', cards.find((n) => n.includes('plugin'))), 'utf8')
 check('卡片带标题', card.includes('DSH 插件实战'))
 check('卡片带摘要', card.includes('第一章讲插件加载'))
-check('卡片带小节行号', /- 生命周期 \(L\d+\)/.test(card), card)
+check('卡片带小节行号', /- 生命周期 \(L8\)/.test(card), card)
 
-// 3. 检索：>=3 字走 FTS5
+// 3. 检索：文档命中走卡片层
 const hit = search(['插件加载', kb, '--rebuild'])
 check('三字检索命中', hit.includes('命中') && hit.includes('docs/DSH/plugin.md'), hit)
 check('检索给出行号', /L\d+:/.test(hit), hit)
 
-// 4. 两字走 LIKE 兜底
+// 4. 短查询（两字）也要能命中
 const short = search(['注册', kb])
 check('两字检索命中', short.includes('命中'), short)
 

@@ -358,13 +358,34 @@ function pathsEntries(kbRoot, cache) {
   return parsePathsYaml(file.text)
 }
 
-/** 项目页 frontmatter 的 description（只读开头一小段，不整份读）。 */
-function projectDescription(pagePath, cache) {
+/**
+ * 项目页 frontmatter 的 description（只读开头一小段，不整份读）。
+ * 同时支持单行值与 YAML 块标量（>- / | 等）：只认 `(.*)` 时，折叠写法的
+ * 项目会把 `>-` 原样注入成「概览：>-」（oa-wh-skill / skills 实测）。
+ */
+export function projectDescription(pagePath, cache) {
   const file = readCached(pagePath, cache)
   if (file === undefined) return undefined
-  const head = file.text.slice(0, 4096)
-  const match = head.match(/^description:\s*(.+)$/m)
-  return match ? match[1].trim().replace(/^["']|["']$/g, '') : undefined
+  const lines = file.text.slice(0, 4096).split('\n')
+  const at = lines.findIndex((line) => /^description:/.test(line))
+  if (at === -1) return undefined
+  const inline = lines[at].slice('description:'.length).trim()
+  if (!/^[>|][+-]?$/.test(inline)) {
+    return inline === '' ? undefined : inline.replace(/^["']|["']$/g, '')
+  }
+  // 块标量：后续缩进行都属于它；遇到顶格行结束。
+  const text = []
+  for (let i = at + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '') {
+      if (text.length > 0) text.push('')
+      continue
+    }
+    if (!/^\s/.test(line)) break
+    text.push(line.trim())
+  }
+  const folded = text.join(' ').replace(/\s+/g, ' ').trim()
+  return folded === '' ? undefined : folded
 }
 
 /** 项目的 docs/ 目录名清单（只列名字，不读文档）。 */
@@ -409,6 +430,31 @@ export function conceptKeywords(kbRoot, projectId, cache = new Map(), limit = 8)
  * 与项目关联的文档主题：读 docs/<主题>/_topic.md 的 projects 列表。
  * 只返回明确绑定的主题，不列「通用」——每轮注入不该塞无差别提示。
  */
+/** 解析页面 frontmatter 的内联列表字段：`key: [a, b]`；没有该字段返回 []。 */
+function inlineList(head, key) {
+  const match = head.match(new RegExp('^' + key + ':\\s*\\[([^\\]]*)\\]\\s*$', 'm'))
+  if (match === null) return []
+  return match[1]
+    .split(',')
+    .map((item) => item.trim().replace(/^["']|["']$/g, ''))
+    .filter((item) => item !== '')
+}
+
+/**
+ * 项目页声明的查询例外：search_roots（项目内子目录）、search_exclude（额外排除目录）、
+ * search_projects（要一起搜的其他项目 id）。默认命令在常驻规则里，这里只补差异。
+ */
+export function searchHints(kbRoot, projectId, cache = new Map()) {
+  const file = readCached(join(kbRoot, 'projects', projectId, projectId + '.md'), cache)
+  if (file === undefined) return undefined
+  const head = file.text.slice(0, 4096)
+  const roots = inlineList(head, 'search_roots')
+  const excludes = inlineList(head, 'search_exclude')
+  const projects = inlineList(head, 'search_projects')
+  if (roots.length === 0 && excludes.length === 0 && projects.length === 0) return undefined
+  return { roots, excludes, projects }
+}
+
 function projectListOf(text) {
   const head = text.slice(0, 1024)
   const list = []
@@ -433,7 +479,6 @@ function projectListOf(text) {
 /**
  * 与项目关联的文档主题：读 docs/<主题>/_topic.md 的 projects 列表。
  * 只返回明确绑定的主题，不列「通用」——每轮注入不该塞无差别提示。
- * docs/ 根层的单篇文档也可在自己的 frontmatter 里写 projects: [...]，同样会被列出。
  */
 export function relatedDocTopics(kbRoot, projectId, cache = new Map()) {
   const docsDir = join(kbRoot, 'docs')
@@ -445,15 +490,10 @@ export function relatedDocTopics(kbRoot, projectId, cache = new Map()) {
   }
   const out = []
   for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const file = readCached(join(docsDir, entry.name, '_topic.md'), cache)
-      if (file === undefined) continue
-      if (projectListOf(file.text).includes(projectId)) out.push(entry.name)
-    } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== '_topic.md') {
-      const file = readCached(join(docsDir, entry.name), cache)
-      if (file === undefined) continue
-      if (projectListOf(file.text).includes(projectId)) out.push(entry.name)
-    }
+    if (!entry.isDirectory()) continue
+    const file = readCached(join(docsDir, entry.name, '_topic.md'), cache)
+    if (file === undefined) continue
+    if (projectListOf(file.text).includes(projectId)) out.push(entry.name)
   }
   return out
 }
@@ -541,6 +581,14 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (docs.length > 0) lines.push('  文档：' + docs.join('、'))
     const topics = relatedDocTopics(kbRoot, project.id, cache)
     if (topics.length > 0) lines.push('  相关文档：' + topics.map((dir) => 'docs/' + dir).join('、'))
+    const hints = searchHints(kbRoot, project.id, cache)
+    if (hints !== undefined) {
+      const parts = []
+      if (hints.roots.length > 0) parts.push('根 ' + hints.roots.map((r) => r + '/').join('、'))
+      if (hints.excludes.length > 0) parts.push('排除 ' + hints.excludes.map((r) => r + '/').join('、'))
+      if (hints.projects.length > 0) parts.push('跨项目 ' + hints.projects.join('、'))
+      lines.push('  查源码：' + parts.join('；') + '（其余用常驻规则的默认排除集）')
+    }
     const concepts = conceptKeywords(kbRoot, project.id, cache)
     if (concepts.length > 0) {
       lines.push('  已收录：' + concepts.join('、') + '（先看项目页，别重复搜）')

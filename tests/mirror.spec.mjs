@@ -73,6 +73,8 @@ write('docs/.DS_Store', 'junk')
 // 卡片索引是生成物：新设备重建即可，不该占同步带宽
 write('.kb-index/cards/docs-a.md', '---\ndoc: docs/a.md\n---\n')
 write('.kb-index/.card-version', '3\n')
+// kb-move 的整库快照只在本地回滚用，不能占同步带宽
+write('.backup/20260101-000000.tar.gz', 'snapshot')
 
 // 远端预置：一个本地已删的旧文件、一个垃圾文件、一个已删的文档
 remote.set('stale.md', 'old')
@@ -96,6 +98,8 @@ check('远端最终与本地一致', [...remote.keys()].sort().join(',') === 'RE
 check('内容被覆盖为本地版本', remote.get('README.md') === 'readme')
 check('卡片索引不进推送', !first.pushed.some((r) => r.startsWith('.kb-index/')), JSON.stringify(first.pushed))
 check('远端不含卡片索引', ![...remote.keys()].some((r) => r.startsWith('.kb-index/')))
+check('备份快照不进推送', !first.pushed.some((r) => r.startsWith('.backup/')), JSON.stringify(first.pushed))
+check('远端不含备份快照', ![...remote.keys()].some((r) => r.startsWith('.backup/')))
 
 const previousMap = first.fileMap
 const scansBefore = propfindCount

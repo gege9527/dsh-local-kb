@@ -100,18 +100,33 @@ def bare_re(old_id):
     return re.compile(r"(?<![0-9A-Za-z_-])" + re.escape(old_id) + r"(?![0-9A-Za-z_-])")
 
 
-def find_refs(kb_root, old_id):
+def load_md_texts(kb_root):
+    """一次读完全库 md：scan 多个项目时旧实现是「项目数 × 全库」，现在只读一遍。"""
+    texts = {}
+    for rel in md_files(kb_root):
+        try:
+            texts[rel] = read_text(os.path.join(kb_root, rel))
+        except OSError:
+            continue
+    return texts
+
+
+def find_refs(kb_root, old_id, texts=None):
     """引用 = projects/<id>/ 路径，或独立的裸 id（_topic.md、子项目表、笔记正文）。"""
     needle = "projects/" + old_id + "/"
     rx = bare_re(old_id)
+    if texts is None:
+        texts = load_md_texts(kb_root)
+    return [rel for rel, text in texts.items() if needle in text or rx.search(text)]
+
+
+def body_hit_lines(text, old_id):
+    """正文里的裸 id 行号：先摘掉 `projects/<id>/` 路径，剩下的命中才算正文引用。"""
+    rx = bare_re(old_id)
     out = []
-    for rel in md_files(kb_root):
-        try:
-            text = read_text(os.path.join(kb_root, rel))
-        except OSError:
-            continue
-        if needle in text or rx.search(text):
-            out.append(rel)
+    for no, line in enumerate(text.split("\n"), 1):
+        if rx.search(line.replace("projects/" + old_id + "/", "")):
+            out.append(no)
     return out
 
 
@@ -123,7 +138,15 @@ def build_plan(kb_root, moves, kind):
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "moves": [],
     }
+    texts = load_md_texts(kb_root)
     for m in moves:
+        ref_files = find_refs(kb_root, m["id_old"], texts)
+        body_hits = {}
+        for rel in ref_files:
+            text = texts.get(rel, "")
+            lines = body_hit_lines(text, m["id_old"])
+            if lines:
+                body_hits[rel] = lines
         plan["moves"].append({
             "id_old": m["id_old"],
             "id_new": m["id_new"],
@@ -133,14 +156,15 @@ def build_plan(kb_root, moves, kind):
             "dir_new": "projects/" + m["id_new"],
             "page_old": "projects/%s/%s.md" % (m["id_old"], m["id_old"]),
             "page_new": "projects/%s/%s.md" % (m["id_new"], m["id_new"]),
-            "ref_files": find_refs(kb_root, m["id_old"]),
+            "ref_files": ref_files,
+            "body_hits": body_hits,
         })
     blob = json.dumps(plan["moves"], ensure_ascii=False, sort_keys=True)
     plan["fingerprint"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
     return plan
 
 
-def apply_plan(kb_root, plan_path):
+def apply_plan(kb_root, plan_path, allow_body=False):
     plan = json.loads(read_text(plan_path))
     moves = plan.get("moves") or []
     if not moves:
@@ -150,6 +174,19 @@ def apply_plan(kb_root, plan_path):
     if hashlib.sha256(blob.encode("utf-8")).hexdigest() != plan.get("fingerprint"):
         print("✖ 计划指纹不匹配（文件被改过），拒绝执行")
         return 2
+
+    # 正文里的裸 id 不做无差别替换：短 id（web / ai / scripts）会命中普通用词与源码路径。
+    # 默认拒绝并列出命中行，确认后用 --allow-body-rewrite 重跑。
+    blocked = []
+    for m in moves:
+        for rel, lines in (m.get("body_hits") or {}).items():
+            blocked.append((m["id_old"], rel, lines))
+    if blocked and not allow_body:
+        print("✖ 检测到 %d 个文件含正文裸 id 引用，默认不改写（避免误伤源码路径与普通用词）" % len(blocked))
+        for old_id, rel, lines in blocked[:20]:
+            print("  %s → %s 行 %s" % (old_id, rel, ",".join(str(x) for x in lines[:12])))
+        print("确认要改：加 --allow-body-rewrite；或先手工处理这些行。")
+        return 3
 
     for m in moves:
         src = os.path.join(kb_root, m["dir_old"])
@@ -165,6 +202,10 @@ def apply_plan(kb_root, plan_path):
     os.makedirs(backup_dir, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     backup = os.path.join(backup_dir, stamp + ".tar.gz")
+    n = 1
+    while os.path.exists(backup):  # 同一秒内多次执行不能互相覆盖
+        n += 1
+        backup = os.path.join(backup_dir, "%s-%d.tar.gz" % (stamp, n))
     with tarfile.open(backup, "w:gz") as tar:
         for name in ("paths.yaml", "projects", "memory", "docs"):
             p = os.path.join(kb_root, name)
@@ -173,20 +214,40 @@ def apply_plan(kb_root, plan_path):
     print("备份: " + backup)
 
     staged = []
-    for m in moves:
-        src = os.path.join(kb_root, m["dir_old"])
-        tmp = src + ".__mv__"
-        os.rename(src, tmp)
-        staged.append((m, tmp))
-    for m, tmp in staged:
-        os.rename(tmp, os.path.join(kb_root, m["dir_new"]))
+    try:
+        for m in moves:
+            src = os.path.join(kb_root, m["dir_old"])
+            tmp = src + ".__mv__"
+            os.rename(src, tmp)
+            staged.append((m, tmp))
+        for m, tmp in staged:
+            os.rename(tmp, os.path.join(kb_root, m["dir_new"]))
+    except OSError as error:
+        # 回滚：把已改名的目录与尚未搬完的 .__mv__ 都挪回原位；备份仍在 .backup/
+        for m, tmp in reversed(staged):
+            src = os.path.join(kb_root, m["dir_old"])
+            dst = os.path.join(kb_root, m["dir_new"])
+            try:
+                if os.path.isdir(dst) and not os.path.exists(src):
+                    os.rename(dst, src)
+                elif os.path.isdir(tmp) and not os.path.exists(src):
+                    os.rename(tmp, src)
+            except OSError:
+                pass
+        print("✖ 移动失败：%s（已尝试回滚，备份在 %s）" % (error, backup))
+        return 1
 
     for m in moves:
         new_page = os.path.join(kb_root, m["page_new"])
         old_page = os.path.join(kb_root, m["dir_new"], m["id_old"] + ".md")
         if os.path.exists(old_page):
             text = read_text(old_page)
-            text = re.sub(r"(?m)^title:.*$", "title: " + m["id_new"], text, count=1)
+            # title 是给人看的名字，只有它还是旧 id（或为空）时才改，不覆盖手写标题。
+            tm = re.search(r"(?m)^title:[ \t]*(.*)$", text)
+            if tm is not None:
+                old_title = tm.group(1).strip().strip('"').strip("'")
+                if old_title in ("", m["id_old"]):
+                    text = text[: tm.start()] + "title: " + m["id_new"] + text[tm.end():]
             text = re.sub(r"(?m)^project_id:.*$", "project_id: " + m["id_new"], text, count=1)
             write_text(new_page, text)
             if os.path.abspath(old_page) != os.path.abspath(new_page):
@@ -235,12 +296,20 @@ def apply_plan(kb_root, plan_path):
     print("完成 %d 个项目，替换引用 %d 处" % (len(moves), replaced))
 
     here = os.path.dirname(os.path.abspath(__file__))
+    failed = []
     card_tool = os.path.join(here, "kb-card.py")
     if os.path.exists(card_tool):
-        subprocess.run([sys.executable, card_tool, kb_root, "--prune"], check=False)
+        code = subprocess.run([sys.executable, card_tool, kb_root, "--prune"], check=False).returncode
+        if code != 0:
+            failed.append("卡片重建（退出码 %d）" % code)
     check_tool = os.path.join(here, "kb-check.py")
     if os.path.exists(check_tool):
-        subprocess.run([sys.executable, check_tool, kb_root], check=False)
+        code = subprocess.run([sys.executable, check_tool, kb_root], check=False).returncode
+        if code == 1:  # 1 = 有错误；2 = 只有警告，不算失败
+            failed.append("kb-check 报错（退出码 1）")
+    if failed:
+        print("✖ 迁移已完成，但后置步骤失败：%s" % "；".join(failed))
+        return 1
     return 0
 
 
@@ -252,6 +321,8 @@ def main(argv):
     ap.add_argument("--to-path")
     ap.add_argument("--plan", help="计划文件路径；--apply 时必需")
     ap.add_argument("--apply", action="store_true", help="执行计划（必须配 --plan）")
+    ap.add_argument("--allow-body-rewrite", action="store_true",
+                    help="允许一并改写正文里的裸 id（默认拒绝，只改路径引用与结构字段）")
     args = ap.parse_args(argv)
 
     kb_root = os.path.abspath(os.path.expanduser(args.kb_root))
@@ -263,13 +334,20 @@ def main(argv):
         if not args.plan:
             print("✖ --apply 必须配 --plan")
             return 2
-        return apply_plan(kb_root, args.plan)
+        return apply_plan(kb_root, args.plan, allow_body=args.allow_body_rewrite)
 
     paths_file = os.path.join(kb_root, "paths.yaml")
     if not os.path.isfile(paths_file):
         print("✖ 缺 paths.yaml")
         return 2
     entries = parse_paths(read_text(paths_file))
+
+    if bool(args.from_path) != bool(args.to_path):
+        print("✖ --from-path 与 --to-path 必须同时提供；只分析用 --scan")
+        return 2
+    if args.scan and args.from_path:
+        print("✖ --scan 与 --from-path/--to-path 不能同时用")
+        return 2
 
     if args.from_path and args.to_path:
         target_old = os.path.abspath(os.path.expanduser(args.from_path))
@@ -278,6 +356,7 @@ def main(argv):
         if hit is None:
             print("✖ paths.yaml 里没有这个路径: " + target_old)
             return 2
+        path_old = hit["path"]  # 先存旧值：下一步会把 entries 里的 path 覆盖成新路径
         for e in entries:
             if e["id"] == hit["id"]:
                 e["path"] = target_new
@@ -285,7 +364,7 @@ def main(argv):
         moves = [{
             "id_old": hit["id"],
             "id_new": ids[hit["id"]],
-            "path_old": hit["path"],
+            "path_old": path_old,
             "path_new": target_new,
         }]
         plan = build_plan(kb_root, moves, "move")
@@ -302,7 +381,9 @@ def main(argv):
     print("计划 %d 项（%s）" % (len(plan["moves"]), plan["kind"]))
     for m in plan["moves"]:
         flag = "移动" if m["path_old"] != m["path_new"] else "改名"
-        print("  %-4s %-28s → %-28s  引用 %d 处" % (flag, m["id_old"], m["id_new"], len(m["ref_files"])))
+        hits = sum(len(v) for v in (m.get("body_hits") or {}).values())
+        extra = "，正文裸 id %d 行（apply 默认拒绝）" % hits if hits else ""
+        print("  %-4s %-28s → %-28s  引用 %d 处%s" % (flag, m["id_old"], m["id_new"], len(m["ref_files"]), extra))
     if args.plan:
         target = os.path.abspath(os.path.expanduser(args.plan))
         write_text(target, json.dumps(plan, ensure_ascii=False, indent=2) + "\n")

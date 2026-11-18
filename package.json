@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-kb",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "知识库 + 长期记忆插件：每轮注入记忆索引与知识地图、索引硬上限、禁止 AI 删除、镜像同步到 WebDAV",
   "keywords": [
     "dsh-plugin",
@@ -56,7 +56,9 @@
     "install-skill.js",
     "migrate.js",
     "client.js",
-    "skills/",
+    "skills/local-kb/SKILL.md",
+    "skills/local-kb/references/",
+    "skills/local-kb/tools/*.py",
     "cordis.patch.yml",
     "locale/",
     "icon.svg",
@@ -82,7 +84,6 @@
     "test:index-cap": "node tests/index-cap.spec.mjs",
     "test:delete": "node tests/delete-guard.spec.mjs",
     "test:inject": "node tests/inject.spec.mjs",
-    "test:agents": "node tests/agents-block.spec.mjs",
     "test:mirror": "node tests/mirror.spec.mjs",
     "test:reminder": "node tests/reminder.spec.mjs",
     "test:settings": "node tests/settings.spec.mjs",

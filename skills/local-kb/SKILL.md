@@ -80,7 +80,7 @@ description: >-
 
 | 输入 | 模式 |
 |---|---|
-| `http://` / `https://` 开头 | **拒绝**：本技能不收网页，提示先保存为本地文件 |
+| `http://` / `https://` 开头 | **拒绝作为输入**：不收网页，提示先保存为本地文件；已入库文档的 `source` 可以是 URL |
 | 本地文件（md/txt/html/docx/odt/pdf/csv 等） | 文档模式 |
 | 用户直接粘贴的内容 | 文档模式 |
 | 目录，含代码特征（`.git` / `package.json` / `src` / `*.py` / `*.js` / `go.mod`…） | **代码模式** |
@@ -98,7 +98,7 @@ description: >-
 | 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文。frontmatter 的 `description` 给中间权重，`aliases` 整串出现在查询里直接置顶 |
 
 **读检索结果先看置信**：
-- `⚠ 低置信：命中 1/9 个词` → 结果多半是字面巧合，**别直接当答案**，换关键词或看「相关记忆」段。
+- `⚠ 低置信：主词 0/2 · 辅助词 1/5` → 结果多半是字面巧合，**别直接当答案**，换关键词或看「相关记忆」段。
 - `未命中：查询里的词在知识库里都没出现过` → 这个主题确实没入库，不是检索没找到。
 - `未命中：N 个词在库中出现过…但没有一篇达到相关阈值` → 有相近内容但措辞不同，换说法再试。
 - 加 `--explain` 看每篇的证据类型（`alias_hit` / `exact_title` / `desc_match` / `keyword`）与分数。
@@ -106,6 +106,9 @@ description: >-
 | 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
 | **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]`；带 `--fix` 预览补索引，加 `--write` 落盘 |
 | **项目移动 / 改名** | 先 `kb-move-project.py <KB_ROOT> --from-path 旧 --to-path 新 --plan /tmp/p.json`，再 `--apply --plan /tmp/p.json`（自动备份 + 改 id/目录/引用） |
+
+**引用文档时不联网**：本地是基线。回答里带「快照 <date_added>（<N> 天前）」；超过 90 天只说
+「可能过时，要核对说『刷新这篇』」。抓取 + 覆写只在用户明确要求时做（协议见 `references/doc-import.md`）。
 
 技能不安装、不探测、不依赖任何第三方工具。AI 若有更强的检索能力可自行使用，
 但技能流程必须能在纯文件系统下完成。
@@ -122,7 +125,7 @@ grep -rn "<关键词>" <KB_ROOT>/projects/<id>/ <KB_ROOT>/memory/ <KB_ROOT>/docs
 跨项目找同一个东西时才显式写多个 `projects/<a>/ projects/<b>/`。
 
 `kb-search` 需要卡片索引（首次或文档变更后建一次）。卡片格式版本变化（新增收录字段）时
-检索会自己重建一次，不用手动 `--rebuild`：
+检索会自己重建一次；`--rebuild` 只在想强制重建时用：
 
 ```bash
 python3 <技能目录>/tools/kb-card.py <KB_ROOT>       # 生成卡片

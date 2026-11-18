@@ -823,8 +823,10 @@ const SYNC_EXCLUDE = [
   /\.tmp$/i,
   /(^|\/)Thumbs\.db$/i,
   /(^|\/)\.kb-sync-state\.json$/,
-  // 文档卡片与 FTS 索引是生成物：kb-search 发现缺卡会自动重建，不必占同步带宽。
+  // 文档卡片是生成物：kb-search 发现缺卡会自动重建，不必占同步带宽。
   /^\.kb-index\//,
+  // kb-move-project.py 的整库快照（每次移动一份，可达数 MB）：本地回滚用，不该传远端。
+  /^\.backup\//,
 ]
 const isSyncExcluded = (rel) => SYNC_EXCLUDE.some((re) => re.test(rel))
 
@@ -1135,10 +1137,10 @@ export function apply(ctx, config = {}) {
   }
 
   /** 定位插件自带的 kb-check.py（随技能副本一起发布）。 */
-function kbCheckScript() {
-  const here = dirname(fileURLToPath(import.meta.url))
-  return join(here, 'skills', 'local-kb', 'tools', 'kb-check.py')
-}
+  function kbCheckScript() {
+    const here = dirname(fileURLToPath(import.meta.url))
+    return join(here, 'skills', 'local-kb', 'tools', 'kb-check.py')
+  }
 
 /** kb-check.py 校验：技能铁律「写入后必跑校验」的 hook 兜底 —— AI 忘记跑时插件补跑。
  *  fire-and-forget；判定完全依赖**退出码**（脚本语义：0=通过，1=错误，2=警告），
@@ -1619,6 +1621,9 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
           lastCheckAt: st.lastCheckAt,
           lastCheckStatus: st.lastCheckStatus,
           lastCheckError: st.lastCheckError,
+          // 页面要用统计与警告列表：只回 lastCheckError 会让「记忆 N 条 / 警告」永远是空的。
+          lastCheckStats: st.lastCheckStats,
+          lastCheckWarns: st.lastCheckWarns,
         },
         settings: {
           remoteDir: pluginSettings.remoteDir,

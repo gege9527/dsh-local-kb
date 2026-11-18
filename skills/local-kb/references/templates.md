@@ -1,7 +1,7 @@
 # 笔记模板（纯标准 Markdown）
 
 **只写标准 Markdown**：不用 `[[wikilink]]`、不用 `[!callout]`、不用 `.base`。
-链接一律用标准 `[文本](相对路径)`。frontmatter 用简单 YAML 子集（裸值或引号包裹，不用多行值）。
+链接一律用标准 `[文本](相对路径)`。frontmatter 用简单 YAML 子集（裸值或引号包裹；列表用 `- ` 项，不用 `>-` 折叠标量）。
 
 ## 代码项目主页
 
@@ -17,6 +17,10 @@ aliases:
   - <中文别名2>
 project_id: <kebab-case 稳定ID｜中文目录原样>
 git_remote: <git 地址，无则 none>
+# 可选：查询例外（默认命令在常驻规则里，只有与本项目不同才写）
+# search_roots: [子目录]              # 只在这个子目录里搜
+# search_exclude: [额外排除目录]        # 追加到默认排除集
+# search_projects: [其他项目 id]        # 要一起搜的其他项目
 indexed_at: "YYYY-MM-DD"
 tags:
   - code-kb
@@ -68,19 +72,9 @@ tags:
 
 > 只列入口文件与 README 点名的文件；**少于 3 行就删掉本节**——空表比没有更误导。
 
-## 怎么查这个项目
-
-```bash
-# 1. 先查知识库（带置信分级，弱结果会告警，别直接当答案）
-python3 <技能目录>/tools/kb-search.py "<中文关键词>"
-
-# 2. 再查源码（本机路径从 paths.yaml 取；必须排除依赖与构建产物，否则会扫进 node_modules）
-grep -rn "<中文关键词>" "<本机路径>" --include="*.js" --include="*.ts" --include="*.py" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target
-
-# 3. 命中后读文件确认行号，再决定是否更新概念表
-```
-
 > **新鲜度**：本页只存变化慢的信息。符号/关系等快变信息不写——查询前现读源码。
+> 查询命令不写进本页：默认命令在常驻规则 `references/agents-snippet.md`（每轮注入），
+> 项目例外写在 frontmatter 的 `search_roots` / `search_exclude` / `search_projects`，inject 每轮带出。
 ```
 
 ## 文档页
@@ -93,6 +87,8 @@ title: "<文档标题>"
 type: doc
 source: "<本地文件绝对路径或粘贴来源说明>"
 date_added: "YYYY-MM-DD"
+last_checked: "YYYY-MM-DD"  # 可选：最近一次回源核对；没回源过不写
+local_edits: false          # 可选：本地加工过（清洗/补图）；覆写前必须提示
 aliases:                 # 可选：用户可能用的俗称，命中即置顶
   - <2~12 字的说法>
 tags:
@@ -104,19 +100,21 @@ tags:
 
 ## 文档主题声明
 
-多文件文档集的目录里放一个 `_topic.md`，声明这个主题是什么、服务哪些项目。
-插件每轮注入时据此在「相关文档」列出该主题；`kb-check` 校验字段与项目引用。
+文档集目录（≥2 篇 md）**必须**有 `_topic.md`：声明主题、服务哪些项目。
+插件每轮注入时据此在「相关文档」列出该主题；`kb-check` 校验字段、存在性与项目引用。
 
 路径：`<KB_ROOT>/docs/<主题>/_topic.md`
 
 ```md
 ---
-topic: "<主题名>"          # 与目录名一致；老文件写 title: 也接受
+topic: "<主题名>"          # 必须与目录名一致
 summary: "<一句话：这个主题收集什么>"
 projects:                  # 已登记的项目 id；通用主题写 []
   - <project_id>
 ---
 ```
+
+正文不写内容：标题、summary、服务项目都已在 frontmatter 里，重复一遍只会漂移。
 
 ## 记忆文件
 

@@ -101,6 +101,7 @@ check('state 不缓存', stateRes.headers.get('cache-control') === 'no-store')
 check('state 不被嗅探', stateRes.headers.get('x-content-type-options') === 'nosniff')
 check('state 带 kbRoot', stateBody.kbRoot === KB_ROOT, String(stateBody.kbRoot))
 check('state 带同步状态', typeof stateBody.state === 'object' && stateBody.state !== null)
+check('state 带体检统计与警告列表', 'lastCheckStats' in stateBody.state && Array.isArray(stateBody.state.lastCheckWarns), JSON.stringify(stateBody.state))
 
 const testRoute = byPath.get('/api/local-kb/test-link')
 const testRes = await testRoute.fetch(new Request('http://local/api/local-kb/test-link', {
