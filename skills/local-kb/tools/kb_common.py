@@ -13,9 +13,10 @@ import re
 
 CARD_DIR = ".kb-index/cards"
 VERSION_FILE = ".card-version"
-# 5 = 项目页卡片不再输出固定模板小节；4 = 多行 tags 进卡片；3 = 摘要回退链。
+# 6 = 项目页卡片用「概念关键词」代替固定模板小节；
+# 5 = 项目页不再输出固定小节；4 = 多行 tags 进卡片；3 = 摘要回退链。
 # 检索端按它判断整库重建。
-CARD_VERSION = 5
+CARD_VERSION = 6
 SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
 
 

@@ -105,6 +105,26 @@ def read_aliases(text):
     return out
 
 
+def concept_keywords(text):
+    """项目页「中文概念 → 位置」第一列：真实检索词，比固定模板小节有信息量。"""
+    m = re.search(r"(?ms)^## 中文概念[^\n]*\n(.*?)(?=^## |\Z)", text)
+    if not m:
+        return []
+    out = []
+    for line in m.group(1).split("\n"):
+        if not line.startswith("|") or "---" in line:
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 2 or cells[0] in ("想找什么", "概念", ""):
+            continue
+        if len(cells[0]) > 30:
+            continue
+        out.append(cells[0])
+        if len(out) >= 12:
+            break
+    return out
+
+
 def build_card(kb_root, rel, full):
     text = open(full, encoding="utf-8", errors="replace").read()
     meta, body = frontmatter(text)
@@ -136,7 +156,16 @@ def build_card(kb_root, rel, full):
     # 长文档的小节才是有效目录。只给非项目页输出「## 小节」。
     parts = rel.replace(os.sep, "/").split("/")
     is_project_page = len(parts) == 3 and parts[0] == "projects" and parts[2] == parts[1] + ".md"
-    if not is_project_page:
+    if is_project_page:
+        # 项目页的固定小节没有信息量；用「中文概念 → 位置」的检索词代替（实测能救回
+        # 只有概念表才有的说法，例如「置信分级」「桥接」）。
+        keys = concept_keywords(text)
+        if keys:
+            lines.append("")
+            lines.append("## 收录")
+            for key in keys:
+                lines.append("- " + key)
+    else:
         lines.append("")
         lines.append("## 小节")
         if secs:
