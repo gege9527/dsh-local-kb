@@ -26,6 +26,9 @@ credentials*.yaml
 .vscode/
 Thumbs.db
 
+# 本地汇报材料（不进仓库）
+BRIEF.md
+
 # python 缓存（技能 tools/ 跑起来会生成）
 __pycache__/
 *.pyc
