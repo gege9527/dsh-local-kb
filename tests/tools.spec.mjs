@@ -39,7 +39,7 @@ write('docs/DSH/plugin.md', [
   '',
   '正文',
 ].join('\n'))
-write('projects/demo/demo.md', ['---', 'title: demo', '---', '', '项目页', '', '## 中文概念 → 位置', '', '| 想找什么 | 去哪 |', '|---|---|', '| 示例功能 | `src/demo.ts:1` |', ''].join('\n'))
+write('projects/demo/demo.md', ['---', 'title: demo', '---', '', '项目页', '', '## 中文概念 → 位置', '', '| 想找什么 | 去哪 | 查询关键词 |', '|---|---|---|', '| 示例功能 | `src/demo.ts:1` | DemoKey |', '', '## 关键文件', '', '| 文件 | 说明 |', '|---|---|', '| `scripts/run.sh` | 启动 |', ''].join('\n'))
 write('projects/demo/docs/note.md', '---\ntitle: 笔记\n---\n\n笔记正文，提到插件加载\n')
 write('projects/demo/memory/MEMORY.md', '# idx\n')
 
@@ -62,6 +62,8 @@ check('卡片带小节行号', /- 生命周期 \(L8\)/.test(card), card)
 const pageCard = fs.readFileSync(path.join(kb, '.kb-index', 'cards', 'projects-demo-demo.md'), 'utf8')
 check('项目页卡片不输出固定小节', !pageCard.includes('## 小节'), pageCard)
 check('项目页卡片收录概念关键词', pageCard.includes('## 收录') && pageCard.includes('示例功能'), pageCard)
+check('项目页卡片收录额外关键词', pageCard.includes('DemoKey'), pageCard)
+check('项目页卡片收录文件路径', pageCard.includes('## 路径') && pageCard.includes('demo.ts') && pageCard.includes('run.sh'), pageCard)
 check('文档卡片保留小节', card.includes('## 小节'), card)
 
 // 3. 检索：文档命中走卡片层

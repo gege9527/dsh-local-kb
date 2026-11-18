@@ -105,24 +105,53 @@ def read_aliases(text):
     return out
 
 
-def concept_keywords(text):
-    """项目页「中文概念 → 位置」第一列：真实检索词，比固定模板小节有信息量。"""
-    m = re.search(r"(?ms)^## 中文概念[^\n]*\n(.*?)(?=^## |\Z)", text)
+FILE_TOKEN = re.compile(r"([A-Za-z0-9_./-]+\.(?:js|mjs|ts|tsx|vue|py|kt|java|html|sh|json|md|go|rs|swift|css))(?::\d+)?")
+
+
+def table_rows(text, heading):
+    """取某个二级标题下 Markdown 表格的数据行（已去掉表头与分隔行）。"""
+    m = re.search(r"(?ms)^## " + re.escape(heading) + r"[^\n]*\n(.*?)(?=^## |\Z)", text)
     if not m:
         return []
-    out = []
+    rows = []
     for line in m.group(1).split("\n"):
         if not line.startswith("|") or "---" in line:
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 2 or cells[0] in ("想找什么", "概念", ""):
+        if not cells or cells[0] in ("想找什么", "概念", "文件", ""):
             continue
-        if len(cells[0]) > 30:
+        rows.append(cells)
+    return rows
+
+
+def project_terms(text):
+    """项目页的检索词：概念（第一列）+ 文件路径（概念表位置列与关键文件表）+ 额外关键词列。"""
+    concepts, paths, extras = [], [], []
+    for cells in table_rows(text, "中文概念"):
+        if len(cells) < 2:
             continue
-        out.append(cells[0])
-        if len(out) >= 12:
-            break
-    return out
+        if len(cells[0]) <= 30:
+            concepts.append(cells[0])
+        for token in FILE_TOKEN.findall(cells[1]):
+            name = token.replace("\\", "/").split("/")[-1]
+            if name not in paths:
+                paths.append(name)
+        for cell in cells[2:]:
+            for part in re.split(r"[,，、/\s]+", cell):
+                part = part.strip().strip("\u0060")
+                if part and len(part) <= 24 and part not in extras:
+                    extras.append(part)
+    for cells in table_rows(text, "关键文件"):
+        for cell in cells[:1]:
+            for token in FILE_TOKEN.findall(cell):
+                name = token.replace("\\", "/").split("/")[-1]
+                if name not in paths:
+                    paths.append(name)
+            plain = cell.strip().strip("\u0060").strip()
+            if plain and not FILE_TOKEN.fullmatch(plain) and "/" not in plain and len(plain) <= 40:
+                if plain not in paths:
+                    paths.append(plain)
+    return concepts[:12], paths[:16], extras[:8]
 
 
 def build_card(kb_root, rel, full):
@@ -157,13 +186,22 @@ def build_card(kb_root, rel, full):
     parts = rel.replace(os.sep, "/").split("/")
     is_project_page = len(parts) == 3 and parts[0] == "projects" and parts[2] == parts[1] + ".md"
     if is_project_page:
-        # 项目页的固定小节没有信息量；用「中文概念 → 位置」的检索词代替（实测能救回
-        # 只有概念表才有的说法，例如「置信分级」「桥接」）。
-        keys = concept_keywords(text)
-        if keys:
+        # 项目页的固定小节没有信息量；换成页面里真正的检索线索：
+        # 概念表第一列（收录）、第三列（关键词）、以及概念/关键文件里的文件名（路径）。
+        concepts, paths, extras = project_terms(text)
+        if concepts:
             lines.append("")
             lines.append("## 收录")
-            for key in keys:
+            for key in concepts:
+                lines.append("- " + key)
+        if extras:
+            lines.append("")
+            lines.append("## 关键词")
+            lines.append("- " + "、".join(extras))
+        if paths:
+            lines.append("")
+            lines.append("## 路径")
+            for key in paths:
                 lines.append("- " + key)
     else:
         lines.append("")
