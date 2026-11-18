@@ -39,7 +39,8 @@
 
 ```md
 ---
-name: <kebab-case-slug>          # 与文件名一致，作链接目标
+name: <kebab-case-slug>          # 与文件名一致，作链接目标；记忆 slug 固定英文（索引/检索标识符），
+                                 # 中文含义写 description/aliases——项目与文档允许中文名，记忆不放开
 description: <一句话钩子>        # 召回靠它判断是否打开，最重要
 type: user | feedback | project | reference
 status: active | completed | archived   # 仅 project 可带（可选）；active = 当前活跃任务

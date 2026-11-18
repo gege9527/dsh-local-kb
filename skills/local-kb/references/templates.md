@@ -15,7 +15,7 @@ description: <一句话说清干什么>
 aliases:
   - <中文别名1>
   - <中文别名2>
-project_id: <kebab-case 稳定ID>
+project_id: <kebab-case 稳定ID｜中文目录原样>
 git_remote: <git 地址，无则 none>
 indexed_at: "YYYY-MM-DD"
 tags:
@@ -124,7 +124,7 @@ projects:                  # 已登记的项目 id；通用主题写 []
 
 ```md
 ---
-name: <kebab-case-slug>
+name: <kebab-case-slug>            # 记忆 slug 固定英文（索引/检索标识符）；中文含义放 description/aliases
 description: <一句话钩子——召回时靠它判断是否打开>
 type: user | feedback | project | reference
 status: active | completed | archived   # 仅 project 可带；active = 当前活跃任务（每目录最多一条）

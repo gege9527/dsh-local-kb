@@ -7,7 +7,8 @@
 ## 步骤 1 — 路径与 ID
 
 - 确定本机绝对路径 `<path>`（必须存在）。
-- 确定 `project_id`：**取能保证唯一的最短路径后缀**——各段 kebab 化（小写、空格与符号转 `-`、中文原样保留），
+- 确定 `project_id`：**取能保证唯一的最短路径后缀**——各段 kebab 化（小写、空格与符号转 `-`、中文原样保留；
+  目录名同理，中文目录不强制转拼音），
   多段用 `-` 连接。目录名唯一时就是目录名本身；同名目录时逐级加上父目录名，直到唯一。
   例：`/work/api` 与 `/apps/api` → `work-api`、`apps-api`；`/OA-AI/excel-form-designer` → `excel-form-designer`。
 - 查 `<KB_ROOT>/paths.yaml`：ID 已存在 → 属 refresh；不存在 → 新增映射。
@@ -90,7 +91,7 @@ python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb
 - [ ] `title` 项目名 / `type`: `code-project`
 - [ ] `description`：一句话，非空，不重复项目名
 - [ ] `aliases`：中文别名数组
-- [ ] `project_id`：kebab-case 稳定 ID（与 paths.yaml 一致）
+- [ ] `project_id`：kebab-case 稳定 ID（中文目录原样保留；与 paths.yaml 一致）
 - [ ] `git_remote`：remote 或 `none`
 - [ ] 概念→位置表每条已验证命中，且注明了「验证：读文件」
 - [ ] 关键文件表只列入口文件与 README 点名的文件，不列全量符号

@@ -2,6 +2,11 @@
 
 ## 未发布
 
+- **中文命名合法化**：规范统一为「中文目录 / 文件名 / 路径合法，存量中文名不改」——
+  `SKILL.md` 结构节、`references/code-project.md`（id 规则与检查清单）、`references/doc-import.md`
+  （文件名规则与检查清单）、`references/templates.md`（project_id 占位）同步改写；记忆 slug 仍固定英文
+  kebab（索引指针与检索标识符），中文含义只进 `description` / `aliases`。校验器行为未变——`kb-check`
+  与 `kb-move-project.py` 一直允许中文 id（`kebab_seg` 保留 CJK），这次只是把文字与实现对齐。
 - **文档单一入口**：`README.md` 扩为完整手册（功能、同步、API、状态、排障、限制、开发一次讲清，
   含徽章 / 目录 / Mermaid 架构图 / 折叠排障）；删除 `GUIDE.md` 与 `DESIGN-multi-device-sync.md`，
   多设备三方合并方案作为「设计稿（未实现）」收入 README；`package.json` 的 `files` 移除 `GUIDE.md`。
