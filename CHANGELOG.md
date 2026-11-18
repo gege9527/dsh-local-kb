@@ -2,6 +2,13 @@
 
 ## 未发布
 
+- **文档单一入口**：`README.md` 扩为完整手册（功能、同步、API、状态、排障、限制、开发一次讲清，
+  含徽章 / 目录 / Mermaid 架构图 / 折叠排障）；删除 `GUIDE.md` 与 `DESIGN-multi-device-sync.md`，
+  多设备三方合并方案作为「设计稿（未实现）」收入 README；`package.json` 的 `files` 移除 `GUIDE.md`。
+- **换设备不主动克隆**：缺失项目改为**先询问用户**；同意才按 `git_remote` 克隆，拒绝或 `none` 则标记缺失。
+  同步更新 `SKILL.md`、`references/code-project.md`、骨架 README 模板与实例。
+- **骨架 README 模板同步**：`skills/local-kb/references/templates.md` 的 README 骨架压到 47 行，
+  与实例同构（根用 `<KB_ROOT>` 占位）；新装 / 换设备不再生成旧长版。技能协议其余内容不变。
 - **清理旧安装器**：`install-skill.js` 从 502 行删到 148 行，只留常量、`resolveDshHome` 与
   `uninstallSkill`；`installSkill` / `appendRulesToAgents` 及其测试（`agents-block.spec.mjs`）删除，
   卸载行为由 `uninstall.spec.mjs` 继续覆盖。

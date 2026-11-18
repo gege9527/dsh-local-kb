@@ -150,8 +150,9 @@ grep -rn "<中文关键词>" "<本机路径>" --include="*.js" --include="*.ts" 
 
 查询流程：知识库命中项目页 → 读 paths.yaml 取本机路径 → 路径**存在**则直接 grep 现查；路径**不存在**则：
 
-- 有 `git_remote` → 输出克隆指引：`git clone <remote> <推荐落点>`，克隆后
-  `/local-kb paths` 更新映射，再继续查询。
-- `git_remote: none` → 明说"该项目不在本机，且无 git 远程，需手动拷贝源码"。
+- 有 `git_remote` → **不主动克隆**。先列出缺失项目并给出建议命令
+  `git clone <remote> <推荐落点>`，**询问用户是否执行**；同意才克隆，
+  然后 `/local-kb paths` 更新映射，再继续查询。拒绝则标记缺失，本次不查源码。
+- `git_remote: none` → 明说"该项目不在本机，且无 git 远程，需手动拷贝源码"，不克隆。
 
 **知识库（含 paths.yaml）随同步走；代码永远不走知识库。**

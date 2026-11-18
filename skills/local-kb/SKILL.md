@@ -209,6 +209,7 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
   换设备时同步该目录即可；`KB_ROOT` 环境变量可指向任意位置。
 - 新增文档类型：在 `references/doc-import.md` 的转换表加一行。
 - 换设备：同步 KB_ROOT（含 paths.yaml）→ 改 paths.yaml 指向新设备路径 →
-  缺失项目按 git_remote 克隆或标记缺失。详见 `references/code-project.md` 末节。
+  缺失项目**先询问用户是否克隆**；同意才按 git_remote 克隆，拒绝或 `none` 则标记缺失。
+  详见 `references/code-project.md` 末节。
 - 常驻块 = `references/agents-snippet.md`：改动后必须同步 `~/.dsh/AGENTS.md`
   的 KB_LOCAL 块（**只取 START..END，不带尾部注释**）与 `SKILLS/local-kb/` 副本。

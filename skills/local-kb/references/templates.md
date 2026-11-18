@@ -158,41 +158,51 @@ How to apply: <下次怎么用>
 ```md
 # 知识库（local-kb）
 
-给 AI 用的纯文件知识库。无 MCP / 第三方服务依赖。
+给 AI 用的纯文件知识库。根 `<KB_ROOT>/`（默认 `~/.local-kb/`，`KB_ROOT` 环境变量可覆盖；Windows 隐藏：`attrib +h`）。
 
 ## 结构
 
-\`\`\`
+\`\`\`text
 <KB_ROOT>/
-  README.md      ← 本文件
-  paths.yaml     ← 项目ID → 本机路径 + git_remote（路径唯一存放处）
-  memory/        ← 全局记忆（MEMORY.md 索引）
-  docs/          ← 通用/跨项目文档
-  projects/      ← 代码项目（活跃）
-    <项目ID>/
-      <项目ID>.md     ← 项目主页（含「项目资料」节）
-      docs/           ← 项目产出文档
-      memory/         ← 项目级记忆
-  archive/       ← 归档（不删除）
-    projects/<项目ID>/   ← 归档的项目
-    docs/<文档集>/       ← 归档的文档集
+  README.md      本文件
+  paths.yaml     项目 ID → 本机路径 + git_remote（唯一路径来源）
+  memory/        全局记忆，MEMORY.md 为索引
+  docs/          跨项目文档；多文件集才建子目录 + _topic.md
+  projects/<id>/ <id>.md 项目页 · docs/ · memory/
+  archive/       归档（只移入，不删除）
+  .kb-index/     卡片索引（生成物，不同步，可整目录删）
 \`\`\`
 
-## 检索
+## 检索（按顺序）
 
-- 项目 / 文档：`python3 <技能目录>/tools/kb-search.py "关键词"`（带置信分级、别名置顶）；
-  裸 grep 时**限定 `projects/` 与 `docs/`，排除 `archive/`**，别扫整库（项目文档在 `projects/<id>/docs/`，别只 grep `projects/*/*.md`）
-- 代码位置：项目页「中文概念 → 位置」→ `paths.yaml` 取本机路径 → grep 源码 + 读文件确认行号
-- 记忆：先读对应 `MEMORY.md` 索引，再打开钩子相关的笔记；索引看不到的才去 grep 记忆正文
+1. 项目 / 文档：`python3 <技能目录>/tools/kb-search.py "关键词"`，按置信分级取用，weak 别当答案。
+   裸 grep 限定 `projects/` 与 `docs/`，排除 `archive/`。
+2. 代码位置：项目页「中文概念 → 位置」→ `paths.yaml` 取路径 → grep 源码 → 读文件确认行号。
+3. 记忆：先读对应 `MEMORY.md` 索引，只开钩子相关的笔记，别批量读正文。
 
-## 规则（给 AI）
+## 写入铁律
 
-- 知识库是加速器，不是真相来源；代码位置以现查为准
-- 不依赖任何第三方工具：纯文件系统（grep / read / git）即可检索与建档
-- 项目路径只存 `paths.yaml`，绝不写进笔记
-- **内容只归档不删除**（根层 `archive/`），物理删除由用户手动
-- 归档统一放根层：记忆目录里不要自建 `archive/`，那边会被索引跳过，笔记等于消失
-- 可由源码机械再生的产物（调用关系图、符号/依赖清单）不入库——代码一变就失效
+- 路径只写 `paths.yaml`，笔记、索引、项目页里不出现绝对路径。
+- 一事实一文件，frontmatter 必填 `name/description/type/created/updated`；type ∈ user|feedback|project|reference。
+- 索引只放指针：一行一个笔记，不搬正文。上限 200 行 / 25 KB，超了先压缩或归档。
+- 只归档不删除：`mv` 进根层 `archive/`，同时删索引行；物理删除只由用户做。
+- 可由源码机械再生的产物（调用图、符号表、依赖清单）不入库——代码一变就失效。
+- 存前先问：换会话还用得上吗？repo/README 已写的不重复存，只存指针。
+
+## 工具（技能 `tools/`）
+
+| 脚本 | 用途 |
+|---|---|
+| `kb-search.py` | 检索，带置信分级 |
+| `kb-card.py` | 生成 / 更新卡片索引；`--prune` 清孤儿 |
+| `kb-check.py` | 体检；`--fix --write` 补缺失索引 |
+| `kb-move-project.py` | 项目移动 / 改名的原子迁移 |
+
+写入后跑 `kb-check.py`；增删文档后跑 `kb-card.py --prune`。
+
+## 换设备
+
+同步本目录 → 把 `paths.yaml` 的 `path` 改成新机器路径 → 缺失项目先问用户是否克隆；同意才按 `git_remote` 克隆，否则标缺失。
 ```
 
 ### paths.yaml
