@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1 — 2026-11-19
+
+### 写入可见性
+
+- **写入回报协议**：`SKILL.md` 与 `references/memory.md` 规定，写入知识库后必须单独一行回报
+  `已写入知识库：<相对路径>`。插件不注入任何额外消息 —— 反馈来自 AI 回复本身，对话上下文不变。
+- **run_code 直写识别**：PTC 模式下 AI 常用 `fs.writeFileSync('…/.local-kb/…')` 绕过写工具，
+  此前不触发体检与自动同步。`tools/result` 新增 `codeWritesKb`：先认 fs 写调用，再按
+  `classifyPath` 判路径；路径由变量拼接时退回到文本包含。判错方向是「多触发一次体检」，
+  不是「漏同步」。
+- **测试**：新增 `tests/code-write.spec.mjs`（16 条断言），并入 `npm test`。
+- **文档**：README 补充写入回报与 run_code 判定的限制说明。
+
 ## 0.6.0 — 2026-11-18
 
 ### 卡片与检索

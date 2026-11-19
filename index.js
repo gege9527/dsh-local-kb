@@ -218,6 +218,44 @@ export function bashWritesKb(kbRoot, args) {
   return cmd.includes(kbRoot)
 }
 
+/**
+ * run_code 里的写文件调用（Node fs / 流）。
+ * 只认明确的写函数，不认任意函数名：判错的方向是「多触发一次体检」，不是「漏同步」。
+ */
+const CODE_WRITE_PATTERN = new RegExp(
+  '(?:\\bfs\\.(?:promises\\.)?(?:writeFile|appendFile|rename|copyFile|rm|unlink|mkdir|truncate|createWriteStream)\\w*\\s*\\()'
+  + '|(?:\\b(?:writeFileSync|appendFileSync|copyFileSync|renameSync|rmSync|unlinkSync|mkdirSync|truncateSync|createWriteStream)\\s*\\()',
+)
+
+/**
+ * run_code 的代码是否会改动 KB 内文件。
+ *
+ * PTC 模式下 AI 常用 `fs.writeFileSync('…/.local-kb/…')` 直写，绕过 write/edit 工具，
+ * tools/result 里看不到 —— 体检与自动同步都不会触发。这里按 bashWritesKb 的思路补一条：
+ * 先要求有写动作，再按 classifyPath 判路径；变量拼出来的路径退回到文本包含。
+ */
+export function codeWritesKb(kbRoot, args) {
+  const code = typeof args?.code === 'string' ? args.code : ''
+  if (code === '' || code.length > 262144) return false
+  if (!CODE_WRITE_PATTERN.test(code)) return false
+  // 变量拼出来的路径判不出（如 `${kb}/memory/${name}.md`）：退回到文本包含的下限
+  if (commandPathTokens(code).length === 0) {
+    return code.includes(kbRoot) || (kbRoot.includes('.local-kb') && code.includes('.local-kb'))
+  }
+  // 只看写调用附近的窗口（前后各 400 字符）：路径可能先赋值给变量再传参。
+  // 同一段代码里「读 KB + 写别处」会多触发一次体检 —— 幂等且防抖，宁可多跑不漏跑。
+  const re = new RegExp(CODE_WRITE_PATTERN.source, 'g')
+  let m
+  while ((m = re.exec(code)) !== null) {
+    const win = code.slice(Math.max(0, m.index - 400), m.index + 400)
+    for (const raw of commandPathTokens(win)) {
+      const { kind } = classifyPath(kbRoot, expandHome(raw))
+      if (kind !== 'outside' && kind !== 'unknown') return true
+    }
+  }
+  return false
+}
+
 /* =========================================================================
  * 记忆索引上限：确定性拒绝（不是提醒）
  * -------------------------------------------------------------------------
@@ -1291,7 +1329,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       // 写工具判定：
       //  - write/edit/str_replace/insert 有 file_path 且落在 KB_ROOT 内；
       //  - str_replace_editor 的 create/str_replace/insert 走 args.path；
-      //  - bash：参数里出现 KB_ROOT 文本即触发（增量检查，无变化零成本）。
+      //  - bash：命令里有写动作且目标在 KB_ROOT 内（无变化零成本）；
+      //  - run_code：代码里有 fs 写调用且路径在 KB_ROOT 内（PTC 直写，绕过写工具）。
       let isKbWrite = false
       if (FILE_WRITE_TOOLS.has(tool) && filePath !== undefined) {
         isKbWrite = isInside(kbRoot, filePath)
@@ -1300,6 +1339,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         && filePath !== undefined) {
         isKbWrite = isInside(kbRoot, filePath)
       } else if (tool === 'bash' && bashWritesKb(kbRoot, args)) {
+        isKbWrite = true
+      } else if (tool === 'run_code' && codeWritesKb(kbRoot, args)) {
         isKbWrite = true
       }
       if (!isKbWrite) return
