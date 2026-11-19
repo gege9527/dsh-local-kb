@@ -84,7 +84,14 @@ dsh-local-kb 让 AI 在每次对话开始时自动带上你的**记忆索引**�
 
 ### 1. 安装
 
-本插件未发布到 npm，用本地路径链接安装（克隆后指向仓库根目录即可）：
+```sh
+dsh plugin --profile web add dsh-local-kb
+```
+
+> 若装到 `0.0.0-stage`，说明 npm 新包审核（staged publish）还没完成；先用下面的本地链接安装，
+> 审核通过后重装即可。
+
+本地开发用链接：
 
 ```sh
 dsh plugin --profile web add link:/path/to/dsh-local-kb
