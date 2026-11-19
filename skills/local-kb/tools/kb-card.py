@@ -13,6 +13,9 @@ import os
 import re
 import sys
 
+# 默认知识库根：与环境变量保持一致（插件侧也读 KB_ROOT）
+DEFAULT_KB = os.environ.get("KB_ROOT") or "~/.local-kb"
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kb_common import CARD_DIR, CARD_VERSION, frontmatter, iter_docs, read_version, slug_of, version_path
 
@@ -220,7 +223,7 @@ def build_card(kb_root, rel, full):
 
 
 def main(argv):
-    kb_root = os.path.expanduser(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "~/.local-kb")
+    kb_root = os.path.expanduser(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else DEFAULT_KB)
     check_only = "--check" in argv
     prune = "--prune" in argv
     force = "--force" in argv

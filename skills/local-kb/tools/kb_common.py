@@ -87,8 +87,8 @@ def kebab_seg(seg):
 
 
 def path_segments(path):
-    """绝对路径 → kebab 化后的段列表（忽略根与空段）。"""
-    return [kebab_seg(x) for x in str(path).split("/") if x]
+    """绝对路径 → kebab 化后的段列表（忽略根与空段；兼容 Windows 反斜杠与盘符）。"""
+    return [kebab_seg(x) for x in re.split(r"[\\/]+", str(path)) if x]
 
 
 def shortest_unique_suffix(parts, siblings):

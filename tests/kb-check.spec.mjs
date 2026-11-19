@@ -144,6 +144,21 @@ check('id 与路径不符报错', parsed2.errors.some((e) => e.includes('项目 
 check('id 重复报错', parsed2.errors.some((e) => e.includes('项目 id 重复') && e.includes('dup')), parsed2.errors.join(' | '))
 check('符合规则的条目不再报', !parsed2.errors.some((e) => e.includes('good→')), parsed2.errors.join(' | '))
 
+
+// 默认根：KB_ROOT 环境变量优先于 ~/.local-kb（与插件侧一致）
+const envRoot = path.join(os.tmpdir(), 'kb-env-root-' + process.pid)
+const envOut = spawnSync(py, [tool, '--json'], { encoding: 'utf8', env: { ...process.env, KB_ROOT: envRoot } })
+check('默认根读 KB_ROOT', envOut.stdout.includes(envRoot) || envOut.stderr.includes(envRoot), envOut.stdout + envOut.stderr)
+
+// 项目 id 推导要认 Windows 反斜杠与盘符
+const segCode = [
+  'import importlib.util, sys',
+  'spec = importlib.util.spec_from_file_location("c", sys.argv[1])',
+  'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+  'print("|".join(m.path_segments("C:\\\\work\\\\api")))',
+].join('\n')
+const segOut = spawnSync(py, ['-c', segCode, path.join(here, '..', 'skills', 'local-kb', 'tools', 'kb_common.py')], { encoding: 'utf8' })
+check('Windows 路径分段', segOut.stdout.trim() === 'c|work|api', segOut.stdout + segOut.stderr)
 const failed = results.filter((ok) => !ok).length
 console.log('\n---- ' + (results.length - failed) + ' passed, ' + failed + ' failed ----')
 fs.rmSync(kb2, { recursive: true, force: true })

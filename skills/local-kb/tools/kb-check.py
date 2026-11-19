@@ -34,6 +34,7 @@ CJK = r"\u4e00-\u9fff"
 TYPES = {"user", "feedback", "project", "reference"}
 STATUSES = {"active", "completed", "archived"}
 STALE = re.compile(r"待办|进行中|正在进行|正在编译|当前瓶颈|未完成|下一步")
+DEFAULT_KB = os.environ.get("KB_ROOT") or "~/.local-kb"
 SOFT_LINES, SOFT_KB = 150, 20
 HARD_LINES, HARD_KB = 200, 25
 # 索引行钩子上限：超过就是把内容写回索引（one short hook + link）。
@@ -450,7 +451,7 @@ ARGV = [a for a in sys.argv[1:] if not a.startswith("--")]
 JSON_MODE = "--json" in sys.argv[1:]
 FIX_MODE = "--fix" in sys.argv[1:]
 WRITE_MODE = "--write" in sys.argv[1:]
-KB = os.path.abspath(os.path.expanduser(ARGV[0] if ARGV else "~/.local-kb"))
+KB = os.path.abspath(os.path.expanduser(ARGV[0] if ARGV else DEFAULT_KB))
 SRC_PATHS = project_source_paths()
 PROJECT_ROOT_ROOT = os.path.join(KB, "projects")
 GLOBAL_MEM_ROOT = os.path.join(KB, "memory")

@@ -19,6 +19,8 @@ import sys
 # 同目录模块：被 importlib 直接加载时 sys.path 里没有脚本目录，显式补上
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kb_common import CARD_DIR, CARD_VERSION, frontmatter, iter_docs, read_version, slug_of, version_path
+# 默认知识库根：与环境变量保持一致（插件侧也读 KB_ROOT）
+DEFAULT_KB = os.environ.get("KB_ROOT") or "~/.local-kb"
 MAX_HITS_PER_DOC = 3
 SNIPPET_CHARS = 110
 TITLE_WEIGHT = 8  # 标题/文件名命中是强信号，实测 3 → 8 把 hit@1 从 13/18 拉到 15/18
@@ -459,7 +461,7 @@ def main(argv):
             continue
         rest.append(a)
         i += 1
-    kb_root = os.path.expanduser(rest[0] if rest else "~/.local-kb")
+    kb_root = os.path.expanduser(rest[0] if rest else DEFAULT_KB)
     cards_dir = os.path.join(kb_root, CARD_DIR)
 
     if "--rebuild" in argv:

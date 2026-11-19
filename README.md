@@ -37,6 +37,7 @@ AI 每轮记得你的项目与结论 · 写入有护栏 · 一键备份到 WebDA
 - [安全](#安全)
 - [排障](#排障)
 - [限制](#限制)
+- [平台支持](#平台支持)
 - [卸载](#卸载)
 - [版本与兼容](#版本与兼容)
 - [发布前校验](#发布前校验)
@@ -88,9 +89,6 @@ dsh-local-kb 让 AI 在每次对话开始时自动带上你的**记忆索引**�
 dsh plugin --profile web add dsh-local-kb
 ```
 
-> 若装到 `0.0.0-stage`，说明 npm 新包审核（staged publish）还没完成；先用下面的本地链接安装，
-> 审核通过后重装即可。
-
 本地开发用链接：
 
 ```sh
@@ -103,11 +101,7 @@ dsh plugin --profile web add link:/path/to/dsh-local-kb
 ### 2. 初始化知识库
 
 第一次让 AI 存东西时，技能会按模板创建 `~/.local-kb/`（`README.md`、`paths.yaml`、`memory/`）。
-也可以用环境变量换位置：
-
-```sh
-KB_ROOT=/data/kb dsh web
-```
+需要换位置见[配置 · 知识库位置](#知识库位置)，快速开始不用管。
 
 ### 3. 配 WebDAV（可选）
 
@@ -309,6 +303,34 @@ python3 skills/local-kb/tools/kb-archive-note.py ~/.local-kb --path projects/<id
 
 WebDAV 的地址、账户、密码、远程目录、自动同步不走这里，由设置页管理。
 
+### 知识库位置
+
+默认 `~/.local-kb`。优先级：**`cordis.patch.yml` 的 `kbRoot` > `KB_ROOT` 环境变量 > 默认**。
+
+长期固定用配置：
+
+```yaml
+# cordis.patch.yml
+config:
+  kbRoot: /data/kb
+```
+
+临时试或容器里用环境变量：
+
+```sh
+KB_ROOT=/data/kb dsh web
+```
+
+**两者建议保持一致**：插件读配置或环境变量；脚本（`kb-check.py` 等）默认只读 `KB_ROOT`。
+只写配置不设环境变量时，手动跑脚本要显式传路径，否则会去查 `~/.local-kb`。
+
+### 命名不可改
+
+下列文件名/目录名是工具链契约，没有开关，改了等于换协议：
+
+`MEMORY.md`、`paths.yaml`、`archive/`、`projects/<id>/<id>.md`、`memory/`；
+项目 id 固定按「最短唯一路径后缀」推导（中文目录原样保留）。
+
 环境变量：
 
 | 变量 | 作用 |
@@ -450,6 +472,22 @@ WebDAV 的地址、账户、密码、远程目录、自动同步不走这里，�
 </details>
 
 ---
+
+## 平台支持
+
+| 平台 | 状态 | 说明 |
+|---|---|---|
+| macOS | ✅ 开发与测试平台 | 全功能，测试在此跑 |
+| Linux（Debian / CentOS / Armbian 等） | ✅ 预期支持 | 需要 Node 24+ 与 Python 3.9+；`python3` 可用即可；本仓库 CI 未覆盖各发行版 |
+| Windows | ⚠️ 部分支持、未实测 | Node 侧有 win32 处理（`python` 命令、路径大小写）；脚本已兼容反斜杠与盘符；建议 WSL / Git Bash |
+
+跨平台的已知处理：
+
+- 路径一律走 `path.join` / `os.path.join`，不拼字符串；
+- 项目 id 推导同时接受 `/` 与 `\`（含 `C:` 盘符）；
+- Windows 上启动 Python 用 `python` 而非 `python3`（插件侧自动判断）；
+- 换行：`kb-check` 写回时保持原文件行尾风格，CRLF 不会被改成 LF；
+- 编码：读写统一 UTF-8，非 UTF-8 文件用容错读取，不崩。
 
 ## 限制
 
