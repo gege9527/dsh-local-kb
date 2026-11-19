@@ -593,7 +593,9 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
   if (stale.length > 0) {
     lines.push('路径失效（登记的是原设备路径，用 git_remote 重新登记）：' + stale.join('、'))
   }
-  if (missing.length > 0) lines.push('未登记（paths.yaml 没有条目）：' + missing.join('、'))
+  if (missing.length > 0) {
+    lines.push('未登记（paths.yaml 没有条目）：' + missing.join('、') + ' —— 写记忆前先跑 kb-add-project.py')
+  }
 
   const project = projectForPath(cwd, entries)
   if (project !== undefined) {
@@ -620,7 +622,7 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
       lines.push('  概念表未填：项目页「中文概念 → 位置」为空，定位请现读源码')
     }
   } else if (cwd !== undefined) {
-    lines.push('当前目录未入库（不在 paths.yaml）。若是要长期工作的项目，说一句「把这个项目加进知识库」即可建档；否则按关键词检索，别猜项目。')
+    lines.push('当前目录未入库（不在 paths.yaml）。写该项目记忆前必须先用 kb-add-project.py 建档，禁止只口头确认；只检索则按关键词，别猜项目。')
   }
 
   const docs = globalDocs(kbRoot)

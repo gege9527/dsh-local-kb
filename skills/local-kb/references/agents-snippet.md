@@ -34,6 +34,9 @@
 ### 写入
 
 - 学到即写（决策/纠正/约束/可复用的坑）；**收尾过一遍**：晋升结论、退休临时状态，没值得留的就说明，别硬写。
+- **先入库再写**：写项目记忆前确认 `projects/<id>/<id>.md` 存在且 `paths.yaml` 有登记；
+  缺失 → 先跑 `kb-add-project.py <KB_ROOT> --path <项目路径>` 建档，再写项目级记忆。
+  **禁止只回复「已记住」而不落盘**；写完回报「已写入知识库：<相对路径>」。
 - 一事实一文件，frontmatter `name/description/type/created/updated`，type ∈
   `user|feedback|project|reference`；指针只进同目录 `MEMORY.md`；改事实更新旧笔记，推翻标
   `> Superseded <日期>`，不删。

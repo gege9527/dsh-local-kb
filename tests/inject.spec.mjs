@@ -156,7 +156,7 @@ check('地图给 kb-search 命令', map.includes('kb-search.py'))
 check('地图不再重复 grep 兜底（规则块已覆盖）', !map.includes('兜底 grep') && !map.includes('grep -rn'))
 
 const outside = knowledgeMapText({ kbRoot: root, cwd: '/tmp/nowhere-kb' })
-check('不在项目内时提示可建档', outside.includes('当前目录未入库') && outside.includes('加进知识库'))
+check('不在项目内时提示先建档', outside.includes('当前目录未入库') && outside.includes('kb-add-project.py'))
 
 const noPaths = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-inject-nopaths-'))
 fs.mkdirSync(path.join(noPaths, 'projects', 'x'), { recursive: true })
