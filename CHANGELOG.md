@@ -30,7 +30,7 @@
 
 ### 注入规范：钩子 ≤24 字
 
-- **对齐上游 engramory**：索引是目录不是内容仓库，索引行 = `- [标题](文件) — 一行钩子`。
+- **索引是目录不是内容仓库**：索引行 = `- [标题](文件) — 一行钩子`。
   钩子（`— ` 之后）**不得超过 24 字**，句子/状态/下一步移回笔记。
 - **源头约束，不在注入层裁**：描述照常注入；`references/memory.md` 的逐行预算从「~200B」收紧到
   「24 字」，`kb-check` 汇总报警（当前全库 144 行存量待迁移，本项目/全局/父项目已清零）。
@@ -39,7 +39,7 @@
 - **开关**：`injectDescriptions: false` 可退回只注入指针（排错用，默认 true）。
 - **测试**：inject 63 条（含 `stripDescriptions` 只削指针行、开关行为）。
 
-### 归档（对齐上游 engramory）
+### 归档
 
 - **`kb-archive-project.py`**：整目录移入 `archive/projects/<id>/`、删 `paths.yaml` 条目、
   全库改写 `projects/<id>/` → `archive/projects/<id>/`、清卡片、跑体检；默认 dry-run。

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kb-archive-note — 把一条记忆笔记移入 archive/ 并删掉它的索引行（只归档，不删除）。
 
-行为对齐上游 engramory：文件移入 archive/、删索引行；recall 不扫 archive，所以归档即退出召回。
+行为：文件移入 archive/、删索引行；recall 不扫 archive，所以归档即退出召回。
   - 全局记忆：memory/<slug>.md → archive/memory/<slug>.md
   - 项目记忆：projects/<id>/memory/<slug>.md → archive/projects/<id>/memory/<slug>.md
   - 对应 MEMORY.md 里指向该笔记的指针行一并删除（含 ⚡ 行；不留归档指针，指针只能指向本目录）

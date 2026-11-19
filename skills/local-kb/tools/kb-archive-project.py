@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kb-archive-project — 把项目整体归档到 archive/projects/<id>/（只归档，不删除）。
 
-行为对齐上游 engramory：文件移入 archive/、删掉索引与登记，不在项目页或正文留「已归档」标记：
+行为：文件移入 archive/、删掉索引与登记，不在项目页或正文留「已归档」标记：
   1. projects/<id>/ 整体移入 archive/projects/<id>/
   2. 删 paths.yaml 条目（不留归档注释段）
   3. 全库把 projects/<id>/ 改写为 archive/projects/<id>/

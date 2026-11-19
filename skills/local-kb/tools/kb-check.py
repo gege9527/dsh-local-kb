@@ -36,7 +36,7 @@ STATUSES = {"active", "completed", "archived"}
 STALE = re.compile(r"待办|进行中|正在进行|正在编译|当前瓶颈|未完成|下一步")
 SOFT_LINES, SOFT_KB = 150, 20
 HARD_LINES, HARD_KB = 200, 25
-# 索引行钩子上限：超过就是把内容写回索引（上游 engramory：one short hook + link）。
+# 索引行钩子上限：超过就是把内容写回索引（one short hook + link）。
 HOOK_MAX_CHARS = 24
 # 注入上限默认 120 行（inject.js DEFAULT_INDEX_MAX_LINES）；到 100 行就该提醒归档。
 NEAR_INJECT_LINES = 100
@@ -287,7 +287,7 @@ def check_memory_dir(d):
         warns.append("记忆索引超软上限(%d 行/%d B，限 %d/%dKB): %s —— 建议压缩" % (idx_lines, idx_bytes, SOFT_LINES, SOFT_KB, rel_d))
     if idx_lines > NEAR_INJECT_LINES:
         index_near_inject_cap.append("%s(%d 行)" % (rel_d, idx_lines))
-    # 索引行 = 一行钩子 + 链接：钩子写长等于把笔记内容渗漏回索引（上游 engramory 同规则）。
+    # 索引行 = 一行钩子 + 链接：钩子写长等于把笔记内容渗漏回索引。
     longest = 0
     long_hook_lines = 0
     for line in idx.split("\n"):
