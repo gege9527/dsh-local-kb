@@ -3,8 +3,8 @@
  *
  * Registers into `settings.section` (id 'knowledge-base') so the settings
  * dialog's left nav gains a "知识库" entry and the page renders our panel.
- * Zero-build lazy-CJS via window.__ModuleLoader__.load — same pattern as the
- * dsh-checkpoint-memory / dsh-turn-undo browser halves.
+ * Zero-build lazy-CJS via window.__ModuleLoader__.load — the DSH browser-half
+ * pattern used by client plugins.
  *
  * The page shows:
  *   - KB root location plus two open buttons. Both reuse DSH's OWN native open

@@ -475,6 +475,15 @@ node install-skill.js --uninstall
 
 ---
 
+## 上游与致谢
+
+记忆协议的结构（两级存储、限长索引、召回与写入纪律）参考了
+[tinqiao-oss/engramory](https://github.com/tinqiao-oss/engramory)
+（MIT License，Copyright © 2026 Beijing Tinqiao Technology Co., Ltd.）。
+本项目的协议文本与代码为独立重写，未复制上游源码。
+
+---
+
 ## 相关文档
 
 - [CHANGELOG.md](CHANGELOG.md) —— 版本变更
