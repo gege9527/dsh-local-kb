@@ -622,7 +622,7 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
       lines.push('  概念表未填：项目页「中文概念 → 位置」为空，定位请现读源码')
     }
   } else if (cwd !== undefined) {
-    lines.push('当前目录未入库（不在 paths.yaml）。写该项目记忆前必须先用 kb-add-project.py 建档，禁止只口头确认；只检索则按关键词，别猜项目。')
+    lines.push('当前目录未入库（不在 paths.yaml）。要写持久记忆先问用户是否建档（kb-add-project.py），同意再写；用户说临时就不写；只检索则按关键词，别猜项目。')
   }
 
   const docs = globalDocs(kbRoot)
