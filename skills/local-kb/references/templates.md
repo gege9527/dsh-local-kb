@@ -182,8 +182,8 @@ How to apply: <下次怎么用>
 
 - 路径只写 `paths.yaml`，笔记、索引、项目页里不出现绝对路径。
 - 一事实一文件，frontmatter 必填 `name/description/type/created/updated`；type ∈ user|feedback|project|reference。
-- 索引只放指针：一行一个笔记，不搬正文。上限 200 行 / 25 KB，超了先压缩或归档。
-- 只归档不删除：`mv` 进根层 `archive/`，同时删索引行；物理删除只由用户做。
+- 索引只放指针：一行一个笔记 + **≤24 字钩子**，不搬正文。上限 200 行 / 25 KB，超了先压缩或归档。
+- 只归档不删除：项目跑 `kb-archive-project.py`、单条记忆跑 `kb-archive-note.py`（移入 `archive/` 并删登记）；物理删除只由用户做。
 - 可由源码机械再生的产物（调用图、符号表、依赖清单）不入库——代码一变就失效。
 - 存前先问：换会话还用得上吗？repo/README 已写的不重复存，只存指针。
 
