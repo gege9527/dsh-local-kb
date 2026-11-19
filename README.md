@@ -39,6 +39,7 @@ AI 每轮记得你的项目与结论 · 写入有护栏 · 一键备份到 WebDA
 - [限制](#限制)
 - [卸载](#卸载)
 - [版本与兼容](#版本与兼容)
+- [发布前校验](#发布前校验)
 - [相关文档](#相关文档)
 - [License](#license)
 
@@ -498,6 +499,17 @@ node install-skill.js --uninstall
 兼容 DSH `>=0.1.0 <0.3.0-0`，已验证 `0.2.2-alpha.2`。
 
 ---
+
+## 发布前校验
+
+`npm publish` 前自动跑两道闸（`prepublishOnly`，任一失败即中止发布）：
+
+1. **载荷完整**（`scripts/check-package.mjs`）：包内技能文件、provider 配置、`files` 覆盖。
+2. **隐私**（`scripts/check-privacy.mjs`）：扫描 `files` 白名单内所有文本文件，命中即阻断——
+   本机绝对路径（`/Users/`、`/home/`、`C:\Users\`）、本机用户名、私钥块、疑似真实凭据、内网 IP；
+   公开署名（`©`）与常量键名放行。
+
+单独跑：`npm run check:privacy`。
 
 ## 上游与致谢
 

@@ -39,6 +39,13 @@
 - **开关**：`injectDescriptions: false` 可退回只注入指针（排错用，默认 true）。
 - **测试**：inject 63 条（含 `stripDescriptions` 只削指针行、开关行为）。
 
+### 发布安全
+
+- **发布前隐私闸**：新增 `scripts/check-privacy.mjs`，接入 `prepublishOnly`。扫描 `package.json files`
+  覆盖的全部文本文件，命中即阻断发布：本机绝对路径（`/Users/`、`/home/`、`C:\Users\`）、
+  本机用户名、私钥块、疑似真实凭据、内网 IP。公开署名（`©`）与常量键名放行。
+- **测试**：新增 `tests/privacy.spec.mjs`（6 条：干净通过、四类拦截、署名放行），并入 `npm test`。
+
 ### 归档
 
 - **`kb-archive-project.py`**：整目录移入 `archive/projects/<id>/`、删 `paths.yaml` 条目、
