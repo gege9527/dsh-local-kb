@@ -39,13 +39,26 @@
 
 ## remove <名>（= 归档，不是删除）
 
-**永不物理删除。** 步骤：
+**永不物理删除。用工具，别手工一步步入。** 与上游 engramory 一致：移入 `archive/` 即退出召回，
+**不在项目页或正文加「已归档」标记**——目录本身即事实。
 
-1. **项目**：`projects/<id>/` 整体移入 `archive/projects/<id>/`；
-   paths.yaml 条目**保留**（源项目未动，映射仍有效）；项目页 frontmatter 加 `status: archived`
-2. **文档**：`docs/<文档集>/` 整体移入 `archive/docs/<文档集>/`；
-   正文头部加一行 `> 已归档 YYYY-MM-DD`
-3. **记忆**：`memory/<slug>.md` → `archive/memory/<slug>.md`；项目记忆 →
-   `archive/projects/<id>/memory/<slug>.md`；从 `MEMORY.md` 移除指针行（**不要留归档指针**，它在目录外）
-4. 校验：原位置无该文件；`archive/` 下对应子目录存在（`projects/` / `docs/` / `memory/`）；索引已更新
-5. 报告时明确："已归档（未删除），如需物理删除请手动执行 `rm`"
+1. **项目**：整目录归档，一条命令
+
+   ```bash
+   python3 <技能目录>/tools/kb-archive-project.py <KB_ROOT> --id <id> --apply
+   ```
+
+   它做：`projects/<id>/` 移入 `archive/projects/<id>/`、删 `paths.yaml` 条目、全库改写
+   `projects/<id>/ → archive/projects/<id>/`、清卡片、跑 kb-check。默认 dry-run，先看计划再加 `--apply`。
+2. **单条记忆**：一条命令
+
+   ```bash
+   python3 <技能目录>/tools/kb-archive-note.py <KB_ROOT> --path <笔记路径> --apply
+   ```
+
+   它做：移入 `archive/memory/<slug>.md`（项目记忆 → `archive/projects/<id>/memory/<slug>.md`）、
+   删对应 `MEMORY.md` 指针行、跑 kb-check。**不要留归档指针**——指针只能指向本目录，归档在根层。
+3. **文档**：`docs/<文档集>/` 整体移入 `archive/docs/<文档集>/`；不加正文标记。
+4. 校验：工具已跑 kb-check；确认原位置无残留。
+5. 报告："已归档（未删除），如需物理删除请手动执行 `rm`"。
+6. 恢复：手工 `mv` 回原位，再补登记（项目补 `paths.yaml` 条目，记忆补索引行）。工具不做 restore。

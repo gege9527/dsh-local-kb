@@ -35,6 +35,9 @@ write('docs/sheets/conditional-formatting.md', doc('条件格式', '按规则给
 write('docs/omniroute.md', doc('OmniRoute 配置手册', '本地实例的 combo 与回退配置，改完要重启。'))
 write('docs/f2/timer.md', doc('动画与计时器', 'F2 的计时器控制动画推进，适合逐帧渲染。'))
 write('docs/unrelated.md', doc('社区准则', '讨论区发帖规范与举报流程。'))
+// 干扰样本：标题里含「实现」，问句里的「实现」若没剥掉就会把它顶到第一
+write('docs/quality/confidence.md', doc('检索置信分级', '置信分级分强、中、弱三档，按覆盖率与主词命中判定。'))
+write('docs/ci/impl-guide.md', doc('使用可重用工作流来实现 SLSA 生成级别', '说明如何实现 SLSA 生成级别 3。'))
 
 // 项目页与项目资料
 write('projects/designer/designer.md', doc('designer', '表单设计器：基于 Univer 画布做渲染，支持组件拖拽。'))
@@ -59,6 +62,7 @@ const CASES = [
   ['关键词', '发布插件', ['DSH/publish.md']],
   ['关键词', '条件格式', ['sheets/conditional-formatting.md']],
   ['关键词', 'OmniRoute 配置', ['omniroute.md']],
+  ['整句', '置信分级在哪实现', ['quality/confidence.md']],
   ['记忆', 'zebra 配色', ['zebra-note.md']],
   ['负例', '量子纠缠是什么', []],
   ['负例', '巴黎地铁票价', []],
@@ -131,6 +135,29 @@ const gradeCode = [
 ].join('\n')
 const gradeOut = spawnSync(py, ['-c', gradeCode, path.join(toolsDir, 'kb-search.py')], { encoding: 'utf8' })
 check('整句只剩一个巧合词判 weak', (gradeOut.stdout || '').trim() === 'weak', gradeOut.stdout + (gradeOut.stderr || ''))
+
+// split_query：疑问副词 + 实现 是问句骨架，剥干净后主词只剩实体词
+const splitCode = [
+  'import importlib.util, sys',
+  'spec = importlib.util.spec_from_file_location("s", sys.argv[1])',
+  'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+  'prim, _ = m.split_query("置信分级在哪实现")',
+  'print("|".join(prim))',
+].join('\n')
+const splitOut = spawnSync(py, ['-c', splitCode, path.join(toolsDir, 'kb-search.py')], { encoding: 'utf8' })
+check('疑问短语不残留实体词', (splitOut.stdout || '').trim() === '置信分级', splitOut.stdout + (splitOut.stderr || ''))
+
+// grade_hits：查询里的 ASCII 实体词全落空时，bigram 全中也不能报 strong
+const capCode = [
+  'import importlib.util, sys',
+  'spec = importlib.util.spec_from_file_location("s", sys.argv[1])',
+  'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+  'card = {"aliases": [], "head": "x", "desc": "", "body": "x", "doc": "x"}',
+  'rows = [(1.0, card, ["部署到", "部署", "署到"])]',
+  'print(m.grade_hits(rows, ["k8s", "部署到"], ["部署", "署到"], "怎么部署到k8s")[0])',
+].join('\n')
+const capOut = spawnSync(py, ['-c', capCode, path.join(toolsDir, 'kb-search.py')], { encoding: 'utf8' })
+check('实体词落空不报强置信', (capOut.stdout || '').trim() === 'moderate', capOut.stdout + (capOut.stderr || ''))
 
 const sentence = rows.filter((r) => r.kind === '整句' && r.pos !== 'MISS' && r.pos !== 'FALSE-HIT').length
 check('整句提问 ≥ 5/6', sentence >= 5, sentence + '/6')

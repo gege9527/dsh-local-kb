@@ -22,16 +22,11 @@ import sys
 import tarfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_common import kebab_seg, path_segments, shortest_unique_suffix
+
 CJK = r"\u4e00-\u9fff"
 HEAD_RE = re.compile(r"^([A-Za-z0-9_" + CJK + r"][\w" + CJK + r"-]*):\s*$")
-
-
-def kebab(seg):
-    s = seg.strip().lower()
-    s = re.sub(r"[\s_]+", "-", s)
-    s = re.sub(r"[^0-9a-z" + CJK + r"-]+", "-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s or "project"
 
 
 def read_text(path):
@@ -67,19 +62,11 @@ def parse_paths(text):
 
 def derive_ids(entries):
     """按「最短唯一路径后缀」给每条算 id。返回 {旧 id: 新 id}。"""
-    segs = {e["id"]: [kebab(x) for x in e["path"].split("/") if x] for e in entries}
+    segs = {e["id"]: path_segments(e["path"]) for e in entries}
+    all_parts = list(segs.values())
     out = {}
     for pid, parts in segs.items():
-        k = 1
-        chosen = None
-        while k <= len(parts):
-            suffix = "-".join(parts[-k:])
-            clashes = [o for o, p in segs.items() if "-".join(p[-k:]) == suffix]
-            if len(clashes) == 1:
-                chosen = suffix
-                break
-            k += 1
-        out[pid] = chosen if chosen is not None else "-".join(parts)
+        out[pid] = shortest_unique_suffix(parts, all_parts) or "-".join(parts)
     return out
 
 

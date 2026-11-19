@@ -14,6 +14,7 @@ import {
   projectForPath,
   relatedDocTopics,
   rulesText,
+  stripDescriptions,
   stripIndexPreamble,
   truncateIndex,
 } from '../inject.js'
@@ -68,7 +69,10 @@ check('cwd 不在项目内返回 undefined', projectForPath('/tmp/elsewhere', en
 
 // 记忆索引
 const mem = memoryIndexText({ kbRoot: root, cwd: nested })
-check('注入含全局索引', mem.includes('全局记忆') && mem.includes('前端语境'))
+// 描述默认注入，但协议要求「一行钩子 ≤24 字」：源头写短，不在注入层裁
+check('注入带描述（钩子）', mem.includes('全局记忆') && mem.includes('- [用户偏好](pref.md)') && mem.includes('前端语境'), mem)
+check('stripDescriptions 只削指针行', stripDescriptions('- [a](a.md) — 说明\n## 组\n> 引用 — 保留') === '- [a](a.md)\n## 组\n> 引用 — 保留')
+check('withDescriptions:false 只留指针', !memoryIndexText({ kbRoot: root, cwd: nested, withDescriptions: false }).includes('前端语境'))
 check('注入含当前项目索引', mem.includes('项目记忆 demo') && mem.includes('顺手读文件不豁免'))
 check('不注入别的项目索引', !mem.includes('不该出现'))
 check('记忆段有注入头', mem.includes('## 记忆索引'))

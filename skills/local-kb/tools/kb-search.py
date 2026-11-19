@@ -33,7 +33,10 @@ BM25_B = 0.75
 
 # 多字停用词：只剥离「问句骨架」，不动实词。单字（的/和/与）不剥，避免切坏词。
 STOP_PHRASES = [
-    "可不可以", "能不能", "有没有", "是不是", "告诉我", "在哪里",
+    # 「疑问副词 + 实现」是问句骨架，其中的「实现」不该当实体词参与打分；
+    # 必须排在「怎么 / 如何 / 在哪」之前，否则先被拆成「 实现」剥不干净。
+    "怎么实现", "如何实现", "在哪实现", "在哪里实现",
+    "可不可以", "能不能", "有没有", "是不是", "告诉我", "在哪里", "在哪", "是多少",
     "是什么", "怎么样", "怎么办", "怎么用", "怎么查", "为什么",
     "请问", "帮我", "一下", "想要", "知道", "介绍", "说明",
     "用法", "写法", "相关", "关于", "这个", "那个", "以及",
@@ -282,9 +285,10 @@ def grade_hits(rows, prim, sec, query):
     """给本次检索定置信：strong / moderate / weak / none。
 
     借 gbrain 的 CRAG 分级思路，纯计算、零模型调用：
-    覆盖率 = (命中主词 + 命中辅助词) / (主词总数 + 辅助词总数)。分母用查询的
-    全部词，不是能匹配的词，否则「量子纠缠的贝尔不等式」这种整句里只剩一个
-    「不等」，1/1 会被误判成高置信。
+    覆盖率 = 命中辅助词 / 辅助词总数。分母用查询的全部辅助词，不是能匹配的词，
+    否则「量子纠缠的贝尔不等式」这种整句里只剩一个「不等」，1/1 会被误判成高置信。
+    主词不进分母（通常只有 1~3 个），另设命中下限：命中 ≥2 个、或有一个长度 ≥3，
+    就足以排除字面巧合。
 
     另外给主词命中一个下限：主词是语义单位（ASCII token / 按虚字切开的段），
     命中两个、或命中一个够长的，就不该判成「字面巧合」。
@@ -308,11 +312,17 @@ def grade_hits(rows, prim, sec, query):
     cov = len(hit_sec) / denom if denom else 0.0
     # 主词下限：主词是语义单位，命中 ≥2 个、或命中一个长度 ≥3 的，就不是字面巧合
     prim_floor = len(hit_prim) >= 2 or any(len(x) >= 3 for x in hit_prim)
+    # 封顶规则：主词一个都没命中，或查询里的 ASCII 实体词全落空时，纯 bigram 覆盖率
+    # 再高也不能报 strong——「怎么部署到k8s」只有「部署」字面撞上通用文档，
+    # 「记忆索引上限是多少」整段不成词但 5/8 个 bigram 命中，都属于同话题邻近而非答案。
+    prim_miss = bool(prim) and not hit_prim
+    anchor_miss = any(p.isascii() for p in prim) and not any(p.isascii() for p in hit_prim)
+    capped = prim_miss or anchor_miss
     shown = "、".join(hit_prim + hit_sec)
     detail = "主词 %d/%d · 辅助词 %d/%d%s" % (
         len(hit_prim), len(prim), len(hit_sec), len(sec),
         ("（%s）" % shown) if shown else "")
-    if cov >= 0.5:
+    if cov >= 0.5 and not capped:
         return "strong", detail
     if cov >= 0.34 or prim_floor:
         return "moderate", detail

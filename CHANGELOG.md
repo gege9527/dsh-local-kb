@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.2 — 2026-11-19
+
+### 检索质量
+
+- **问句骨架剥离**：`STOP_PHRASES` 补「在哪 / 是多少」，并把「怎么实现 / 如何实现 / 在哪实现 /
+  在哪里实现」排在疑问副词之前。此前「置信分级在哪实现」整句成一个主词，永远命不中卡片，
+  而「实现」反而把 GitHub Actions 文档顶到第一；现在命中 `projects/dsh-local-kb/dsh-local-kb.md`
+  且判 strong。
+- **置信封顶**：`grade_hits` 新增两条降级——主词一个都没命中、或查询里的 ASCII 实体词
+  （k8s、vue…）全落空时，bigram 覆盖率再高也不报 strong。「记忆索引上限是多少」由 strong
+  降为 moderate；「怎么部署到k8s」不再对通用部署文档报 strong。
+- **注释与实现对齐**：`grade_hits` docstring 的覆盖率公式写成「主词+辅助词」，实际分母只有
+  辅助词，已改正；`inject.js` 头部注释硬编码「25 个项目页、408 个文档」已过时，改为不写数字。
+- **测试**：hit-rate 新增「疑问短语不残留实体词」「实体词落空不报强置信」两条纯函数断言与
+  一条干扰文档端到端问法，并加两份干扰样本。全量 454 条断言通过；hit@1 10/11、hit@5 11/11。
+
+### 建档工具
+
+- **新增 `kb-add-project.py`**：一条命令完成新项目建档 —— 按全库唯一后缀推导 id
+  （`/Desktop/test` → `test`；已有 `apps/api` 时 `/work/api` → `work-api`）、
+  查重（同路径或同 `git_remote` 直接拒绝）、追加 `paths.yaml`、建目录与记忆索引、
+  生成项目页骨架并跑体检；`--dry-run` 只看计划。新增会让已有 id 不再唯一时，显式提示
+  跑 `kb-move-project.py --scan`，不偷改别人的 id。
+- **命名规则单一源**：`kebab_seg` / `path_segments` / `shortest_unique_suffix` 收进
+  `kb_common.py`，`kb-move-project.py` 与 `kb-check.py` 改用它，不再各写一份。
+- **测试**：新增 `tests/add-project.spec.mjs`（11 条断言：唯一后缀、同名后缀、重复拒绝、
+  dry-run、frontmatter 完整性），并入 `npm test`。
+
+### 注入规范：钩子 ≤24 字
+
+- **对齐上游 engramory**：索引是目录不是内容仓库，索引行 = `- [标题](文件) — 一行钩子`。
+  钩子（`— ` 之后）**不得超过 24 字**，句子/状态/下一步移回笔记。
+- **源头约束，不在注入层裁**：描述照常注入；`references/memory.md` 的逐行预算从「~200B」收紧到
+  「24 字」，`kb-check` 汇总报警（当前全库 144 行存量待迁移，本项目/全局/父项目已清零）。
+- **注入上限放宽**：`injectMaxLines` 80 → **120**、`injectMaxBytes` 8 KB → **12 KB**（短钩子下单行
+  约 55–70 字符，行数是主约束；120 行给当前最大索引 74 行留余量）；索引 >100 行时 kb-check 提示归档。
+- **开关**：`injectDescriptions: false` 可退回只注入指针（排错用，默认 true）。
+- **测试**：inject 63 条（含 `stripDescriptions` 只削指针行、开关行为）。
+
+### 归档（对齐上游 engramory）
+
+- **`kb-archive-project.py`**：整目录移入 `archive/projects/<id>/`、删 `paths.yaml` 条目、
+  全库改写 `projects/<id>/` → `archive/projects/<id>/`、清卡片、跑体检；默认 dry-run。
+  不在项目页或正文留「已归档」标记，不建 `archive/README.md`；恢复靠手工 `mv` + 补登记。
+- **`kb-archive-note.py`**：单条记忆移入 `archive/memory/`（项目 → `archive/projects/<id>/memory/`），
+  删对应 `MEMORY.md` 指针行；不留归档指针（指针只能指向本目录）。
+- **协议同步**：`actions.md` 的 remove 六步改成两条命令，删掉「正文加 `> 已归档`」与
+  「项目页加 `status: archived`」。
+- **测试**：新增 `tests/archive-project.spec.mjs`（10 条）与 `tests/archive-note.spec.mjs`（8 条）。
+
 ## 0.6.1 — 2026-11-19
 
 ### 写入可见性

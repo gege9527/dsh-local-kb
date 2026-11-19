@@ -142,7 +142,7 @@ python3 <技能目录>/tools/kb-search.py "<关键词>" --rebuild   # 建索引�
 | refresh <名> | 刷新（代码重新索引 / 文档重新读取源文件） |
 | alias <名> <别名…> | 追加中文别名（改 frontmatter） |
 | paths | 查看/更新 paths.yaml |
-| remove <名> | **归档**条目（移入 archive/ + 标记，**不删除**） |
+| remove <名> | **归档**条目：跑 `kb-archive-project.py` / `kb-archive-note.py`（移入 archive/，**不删除、不留标记**） |
 
 所有动作的详细步骤见 `references/actions.md`。
 

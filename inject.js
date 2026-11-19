@@ -5,7 +5,7 @@
  *
  *  - 记忆（memory/MEMORY.md、projects/<id>/memory/MEMORY.md）是**召回型**：模型必须
  *    每轮知道「记过什么」，靠自己去 read 会被跳过，所以整份注入，按上限截断。
- *  - 知识（25 个项目页、408 个文档）是**检索型**：正文永远不注入，只注入「地图」——
+ *  - 知识（所有项目页与文档）是**检索型**：正文永远不注入，只注入「地图」——
  *    有哪些项目、当前项目是谁、它的文档目录叫什么。让模型知道去哪 grep，而不是替它读。
  *
  * dsh 每个 step 同步调用 context.text()，所以这里只用同步 IO，并按 mtime/size 缓存：
@@ -18,9 +18,13 @@ import { fileURLToPath } from 'node:url'
 
 /** 同一份文件在这个窗口内不重复 stat（dsh 每步都会问一次）。 */
 const RECHECK_MS = 10_000
-/** 单个索引注入上限：超过就截断并提示压缩。 */
-export const DEFAULT_INDEX_MAX_LINES = 80
-export const DEFAULT_INDEX_MAX_BYTES = 8 * 1024
+/**
+ * 单个索引注入上限：超过就截断并提示压缩。
+ * 描述规范化成「一行钩子」（≤24 字）后，单行约 55–70 字符，行数是主约束；
+ * 120 行给当前最大索引（74 行）留出增长空间，避免静默截断。
+ */
+export const DEFAULT_INDEX_MAX_LINES = 120
+export const DEFAULT_INDEX_MAX_BYTES = 12 * 1024
 /** 索引文件大到这个程度就不读（不是记忆索引该有的体量）。 */
 const INDEX_READ_LIMIT = 1024 * 1024
 /** 地图里最多列几个项目 id / 文档目录名。 */
@@ -232,6 +236,22 @@ export function findActiveNotes(dir, cache = new Map()) {
   return actives
 }
 
+/**
+ * 抽掉指针行里的 ` — 描述`：描述是笔记内容，不是索引。
+ * 索引每步都注入，带上描述等于把内容每步付一遍（实测描述占索引体积 48%）。
+ * 只动指针行，标题、链接、⚡ 与非指针行（小节标题、说明）原样保留。
+ */
+export function stripDescriptions(text) {
+  return String(text ?? '')
+    .split('\n')
+    .map((line) => {
+      if (!/^\s*-\s/.test(line)) return line
+      const cut = line.indexOf(' — ')
+      return cut < 0 ? line : line.slice(0, cut)
+    })
+    .join('\n')
+}
+
 /** 把索引里指向活跃笔记的行加 `⚡`（幂等：已带标记的不重复加）。 */
 export function markActiveLines(text, actives) {
   if (actives.length === 0) return text
@@ -254,6 +274,7 @@ export function memoryIndexText({
   cache = new Map(),
   maxLines = DEFAULT_INDEX_MAX_LINES,
   maxBytes = DEFAULT_INDEX_MAX_BYTES,
+  withDescriptions = true,
 }) {
   const parts = []
   let actives = []
@@ -263,7 +284,9 @@ export function memoryIndexText({
     // 索引文件顶部的 `>` 段落是给人看的协议说明（「Pointers only…」「跨项目记忆指引…」），
     // 规则块里已有等价约束，每步重复注入纯属浪费 → 注入前剥掉。
     const body = stripIndexPreamble(file.text)
-    const cut = truncateIndex(markActiveLines(body, activeNotes), maxLines, maxBytes)
+    // 先去描述、再标 ⚡、最后截断：描述不占行，能多带几行指针。
+    const lean = withDescriptions ? body : stripDescriptions(body)
+    const cut = truncateIndex(markActiveLines(lean, activeNotes), maxLines, maxBytes)
     parts.push(
       `### ${label} · ${rel(kbRoot, path)}\n` +
       (note === '' ? '' : note + '\n') +

@@ -37,6 +37,9 @@ const REQUIRED_SKILL_FILES = [
   'skills/local-kb/tools/kb-check.py',
   'skills/local-kb/tools/kb-card.py',
   'skills/local-kb/tools/kb-move-project.py',
+  'skills/local-kb/tools/kb-add-project.py',
+  'skills/local-kb/tools/kb-archive-project.py',
+  'skills/local-kb/tools/kb-archive-note.py',
   'skills/local-kb/tools/kb_common.py',
 ]
 for (const rel of REQUIRED_SKILL_FILES) {

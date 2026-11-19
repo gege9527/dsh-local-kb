@@ -195,6 +195,9 @@ How to apply: <下次怎么用>
 | `kb-card.py` | 生成 / 更新卡片索引；`--prune` 清孤儿 |
 | `kb-check.py` | 体检；`--fix --write` 补缺失索引 |
 | `kb-move-project.py` | 项目移动 / 改名的原子迁移 |
+| `kb-add-project.py` | 新项目一条命令建档：推导 id、写 paths、建目录与索引 |
+| `kb-archive-project.py` | 项目整体归档到 `archive/projects/`：删登记、改引用、清卡片 |
+| `kb-archive-note.py` | 单条记忆归档到 `archive/`：删索引行 |
 
 写入后跑 `kb-check.py`；增删文档后跑 `kb-card.py --prune`。
 

@@ -1058,6 +1058,8 @@ export function apply(ctx, config = {}) {
     const cache = new Map()
     const maxLines = positiveInt(config.injectMaxLines, DEFAULT_INDEX_MAX_LINES)
     const maxBytes = positiveInt(config.injectMaxBytes, DEFAULT_INDEX_MAX_BYTES)
+    // 描述默认注入，但协议要求「一行钩子 ≤24 字」——源头写短，不在注入层裁。
+    const withDescriptions = config.injectDescriptions !== false
     ctx.inject(['systemPrompt'], (inner) => {
       const prompt = inner.systemPrompt
       if (typeof prompt?.context !== 'function') return
@@ -1068,7 +1070,7 @@ export function apply(ctx, config = {}) {
         interpolate: false,
         text: (context) => {
           try {
-            return memoryIndexText({ kbRoot, cwd: sessionCwd(context), cache, maxLines, maxBytes })
+            return memoryIndexText({ kbRoot, cwd: sessionCwd(context), cache, maxLines, maxBytes, withDescriptions })
           } catch {
             return '' // 注入失败绝不拖垮请求
           }

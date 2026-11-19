@@ -246,6 +246,17 @@ AI 每次开始工作，都会看到全局记忆索引、当前项目（含父�
 
 项目 ID 取能保证唯一的最短路径后缀：目录名唯一就用目录名；同名目录逐级加父目录名；中文目录原样保留。
 
+新项目**用一条命令建档**，别手写 id：
+
+```sh
+python3 skills/local-kb/tools/kb-add-project.py ~/.local-kb --path <绝对路径> \
+  --title <项目名> --description "<一句话>" --alias <中文别名>
+```
+
+它按全库路径推导 id（`/Desktop/test` → `test`；已有 `apps/api` 时 `work/api` → `work-api`）、
+查重（同路径或同 `git_remote` 直接拒绝）、追加 `paths.yaml`、建目录与记忆索引、生成项目页骨架，
+最后跑一遍体检；`--dry-run` 只看计划不落盘。
+
 项目移动或改名后，别只手改 `paths.yaml`：
 
 ```sh
@@ -258,6 +269,21 @@ python3 skills/local-kb/tools/kb-move-project.py ~/.local-kb --apply --plan /tmp
 `--apply` 默认不改正文里的裸 id（短 id 会误伤普通用词与源码路径）：命中时会列出文件与行号并拒绝，
 确认后加 `--allow-body-rewrite` 再执行。
 
+### 归档
+
+归档 = 移进 `archive/`，**不删除、不留标记**；归档后不再进检索、不再注入。
+
+```sh
+# 整个项目（目录 + 记忆 + 项目页），同时删掉 paths.yaml 登记
+python3 skills/local-kb/tools/kb-archive-project.py ~/.local-kb --id <id> --apply
+
+# 单条记忆
+python3 skills/local-kb/tools/kb-archive-note.py ~/.local-kb --path projects/<id>/memory/<slug>.md --apply
+```
+
+两者默认 dry-run，`--apply` 才写。项目归档会改写全库 `projects/<id>/` 引用、清卡片、跑体检，
+并打印归档日期（不写进项目页）。恢复用手工：`mv` 回原位 + 补回登记（工具不做 restore）。
+
 ---
 
 ## 配置
@@ -268,8 +294,9 @@ python3 skills/local-kb/tools/kb-move-project.py ~/.local-kb --apply --plan /tmp
 |---|---|---|
 | `kbRoot` | `~/.local-kb` | 知识库根（也认 `KB_ROOT` 环境变量） |
 | `injectContext` | `true` | 是否每轮注入记忆索引与知识地图 |
-| `injectMaxLines` | `80` | 单个索引最多注入多少行 |
-| `injectMaxBytes` | `8192` | 单个索引最多注入多少字节 |
+| `injectMaxLines` | `120` | 单个索引最多注入多少行 |
+| `injectMaxBytes` | `12288` | 单个索引最多注入多少字节 |
+| `injectDescriptions` | `true` | 记忆索引是否带「— 钩子」；钩子由协议限定 ≤24 字 |
 | `indexCap` | `true` | 是否启用记忆索引硬上限 |
 | `compactionReminder` | `true` | 长对话是否提醒写记忆 |
 | `reminderPressure` | `0.6` | 上下文占用多少比例时提醒（0 < x ≤ 1） |
@@ -460,10 +487,11 @@ node install-skill.js --uninstall
 
 ## 版本与兼容
 
-当前版本 `0.6.1`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本 `0.6.2`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 版本 | 主题 |
 |---|---|
+| 0.6.2 | 问句骨架剥离、置信封顶（实体词落空不报强置信）、注释与实现对齐 |
 | 0.6.1 | 写入回报协议、run_code 直写识别（体检与同步不再漏） |
 | 0.6.0 | 卡片 v4 与共享模块、查询命令收敛、回源按时间、kb-move 安全开关、死代码与打包清理 |
 | 0.5.0 | 技能随插件加载、规则注入、旧安装迁移、体检与上传解耦、发布前校验 |

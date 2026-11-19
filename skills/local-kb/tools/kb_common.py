@@ -75,6 +75,34 @@ def frontmatter(text):
     return meta, text[end + 4:]
 
 
+CJK_RANGE = r"\u4e00-\u9fff"
+
+
+def kebab_seg(seg):
+    """路径段归一：小写、空白与符号转 -，中文原样保留（kb-move / kb-check / kb-add 同一规则）。"""
+    s = seg.strip().lower()
+    s = re.sub(r"[\s_]+", "-", s)
+    s = re.sub(r"[^0-9a-z" + CJK_RANGE + r"-]+", "-", s)
+    return re.sub(r"-+", "-", s).strip("-") or "project"
+
+
+def path_segments(path):
+    """绝对路径 → kebab 化后的段列表（忽略根与空段）。"""
+    return [kebab_seg(x) for x in str(path).split("/") if x]
+
+
+def shortest_unique_suffix(parts, siblings):
+    """在 siblings（所有项目的段列表，含自身）里取最短的不冲突后缀。
+
+    返回 None 表示从最短段到整条路径都与别人冲突——调用方决定兜底（拼全段或报错）。
+    """
+    for k in range(1, len(parts) + 1):
+        suffix = "-".join(parts[-k:])
+        if sum(1 for other in siblings if "-".join(other[-k:]) == suffix) == 1:
+            return suffix
+    return None
+
+
 def slug_of(rel):
     stem = rel[:-3] if rel.endswith(".md") else rel
     return re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]+", "-", stem).strip("-")

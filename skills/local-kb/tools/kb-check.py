@@ -27,12 +27,19 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_common import kebab_seg, path_segments, shortest_unique_suffix
+
 CJK = r"\u4e00-\u9fff"
 TYPES = {"user", "feedback", "project", "reference"}
 STATUSES = {"active", "completed", "archived"}
 STALE = re.compile(r"待办|进行中|正在进行|正在编译|当前瓶颈|未完成|下一步")
 SOFT_LINES, SOFT_KB = 150, 20
 HARD_LINES, HARD_KB = 200, 25
+# 索引行钩子上限：超过就是把内容写回索引（上游 engramory：one short hook + link）。
+HOOK_MAX_CHARS = 24
+# 注入上限默认 120 行（inject.js DEFAULT_INDEX_MAX_LINES）；到 100 行就该提醒归档。
+NEAR_INJECT_LINES = 100
 # 索引指针行「- [描述](目标.md)」与二级小节标题「## name」
 # 左右方括号拆开拼：技能严禁 Obsidian wikilink 语法，源码里连写两个左括号会被测试拦下。
 _LB, _RB = r"\[", r"\]"
@@ -41,6 +48,9 @@ SECTION_LINE = re.compile(r"^##\s+(.+?)\s*$")
 # 只有这两个小节名表达 status 分组语义；其余（type / 日期）都是自由分组
 GROUP_SECTIONS = ("active", "completed")
 errors, warns = [], []
+# 索引行钩子超长（内容渗漏回索引）与接近注入上限：逐目录收集，最后汇总成一条警告。
+index_long_hooks = []
+index_near_inject_cap = []
 
 
 def read(p):
@@ -275,6 +285,23 @@ def check_memory_dir(d):
         errors.append("记忆索引超硬上限(%d 行/%d B，限 %d/%dKB): %s —— 先压缩再追加" % (idx_lines, idx_bytes, HARD_LINES, HARD_KB, rel_d))
     elif idx_lines > SOFT_LINES or idx_bytes > SOFT_KB * 1024:
         warns.append("记忆索引超软上限(%d 行/%d B，限 %d/%dKB): %s —— 建议压缩" % (idx_lines, idx_bytes, SOFT_LINES, SOFT_KB, rel_d))
+    if idx_lines > NEAR_INJECT_LINES:
+        index_near_inject_cap.append("%s(%d 行)" % (rel_d, idx_lines))
+    # 索引行 = 一行钩子 + 链接：钩子写长等于把笔记内容渗漏回索引（上游 engramory 同规则）。
+    longest = 0
+    long_hook_lines = 0
+    for line in idx.split("\n"):
+        if not line.lstrip().startswith("- ") or "](" not in line:
+            continue
+        m = re.search(r"\]\([^)]*\)\s*—\s*(.+)$", line)
+        if m is None:
+            continue
+        hook = m.group(1).strip()
+        if len(hook) > HOOK_MAX_CHARS:
+            long_hook_lines += 1
+            longest = max(longest, len(hook))
+    if long_hook_lines:
+        index_long_hooks.append((rel_d, long_hook_lines, longest))
     notes = [f for f in os.listdir(d) if f.endswith(".md") and f != "MEMORY.md"]
     n = 0
     active_count = 0
@@ -545,6 +572,17 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
                 if not os.path.exists(os.path.join(dd, target)):
                     errors.append("项目资料死链: projects/%s → %s" % (d, target))
 
+# 注入质量：钩子超长（内容渗漏回索引）/ 索引接近注入上限
+if index_long_hooks:
+    total = sum(n for _, n, _ in index_long_hooks)
+    worst = max(index_long_hooks, key=lambda item: item[2])
+    warns.append("记忆索引钩子超长 %d 行（建议 ≤ %d 字，最长 %d 字）：%s —— 把内容移回笔记"
+                 % (total, HOOK_MAX_CHARS, worst[2],
+                    "；".join("%s×%d" % (rel_d, n) for rel_d, n, _ in index_long_hooks[:6])))
+if index_near_inject_cap:
+    warns.append("记忆索引接近注入上限（注入默认 %d 行）：%s —— 归档已完成的记忆"
+                 % (NEAR_INJECT_LINES, "、".join(index_near_inject_cap[:6])))
+
 # 内容下限汇总：逐条会命中大量存量（见 check_doc 上方注释），合并成几条
 if page_what_short:
     warns.append("项目页「这是什么」<60 字 %d 个（需说清解决什么问题 + 边界）: %s"
@@ -584,27 +622,18 @@ if os.path.exists(yp):
             path_entries.append((cur_id, pm.group(1).strip("'\"")))
             cur_id = None
 
-# 命名规则：id = 能保证唯一的最短路径后缀（与 kb-move-project.py 同一条规则）
-def kebab_seg(seg):
-    s = seg.strip().lower()
-    s = re.sub(r"[\s_]+", "-", s)
-    s = re.sub(r"[^0-9a-z" + CJK + r"-]+", "-", s)
-    return re.sub(r"-+", "-", s).strip("-") or "project"
+# 命名规则：id = 能保证唯一的最短路径后缀（kebab_seg / shortest_unique_suffix 来自 kb_common）
 
 if path_entries:
     ids_only = [e[0] for e in path_entries]
     dup_ids = sorted({i for i in ids_only if ids_only.count(i) > 1})
     if dup_ids:
         errors.append("paths.yaml 项目 id 重复: " + "、".join(dup_ids))
-    segs = {i: [kebab_seg(x) for x in p.split("/") if x] for i, p in path_entries}
+    segs = {i: path_segments(p) for i, p in path_entries}
+    all_parts = list(segs.values())
     wrong = []
     for i, parts in segs.items():
-        derived = None
-        for k in range(1, len(parts) + 1):
-            suf = "-".join(parts[-k:])
-            if sum(1 for other in segs.values() if "-".join(other[-k:]) == suf) == 1:
-                derived = suf
-                break
+        derived = shortest_unique_suffix(parts, all_parts)
         if derived is not None and derived != i:
             wrong.append("%s→%s" % (i, derived))
     if wrong:
