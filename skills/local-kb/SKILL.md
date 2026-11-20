@@ -223,5 +223,6 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 - 换设备：同步 KB_ROOT（含 paths.yaml）→ 改 paths.yaml 指向新设备路径 →
   缺失项目**先询问用户是否克隆**；同意才按 git_remote 克隆，拒绝或 `none` 则标记缺失。
   详见 `references/code-project.md` 末节。
-- 常驻块 = `references/agents-snippet.md`：改动后必须同步 `~/.dsh/AGENTS.md`
-  的 KB_LOCAL 块（**只取 START..END，不带尾部注释**）与 `SKILLS/local-kb/` 副本。
+- 常驻块 = `references/agents-snippet.md`，插件启动时直接读取注入：0.5.0 起**不再写
+  `~/.dsh/AGENTS.md`、也不复制 `skills/` 副本**（见 `install-skill.js` 头注释）；改完 ≤10 秒
+  生效（mtime 缓存），无需重启。不要再手写 AGENTS.md 规则块，否则与注入规则重复。

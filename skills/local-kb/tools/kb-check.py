@@ -333,7 +333,8 @@ def check_memory_dir(d):
             statuses[f] = st
         name = field(fm, "name")
         if name and name != f[:-3]:
-            errors.append("记忆 name 与文件名不一致(%s≠%s): %s" % (name, f[:-3], rel))
+            errors.append("记忆 name 与文件名不一致(%s≠%s): %s —— 应改成 name: %s（中文标题放正文 H1 与索引钩子）"
+                             % (name, f[:-3], rel, f[:-3]))
         if field(fm, "title") or field(fm, "project_id"):
             errors.append("记忆含协议外字段(title/project_id): %s" % rel)
         if st == "active":

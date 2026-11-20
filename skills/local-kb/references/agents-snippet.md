@@ -34,12 +34,13 @@
 ### 写入
 
 - 学到即写（决策/纠正/约束/可复用的坑）；**收尾过一遍**：晋升结论、退休临时状态，没值得留的就说明，别硬写。
+- **写记忆前读**技能里的 `references/memory.md`（召回 + 字段协议 + 写入自检），模板见 `references/templates.md`。
 - **未入库先入库**：给项目写知识（项目页、docs/、memory/）前，看注入地图的「当前项目」——
   未标注或标「未入库」→ 直接跑 `kb-add-project.py`（空文件夹也建）；项目相关文档不进全局 `docs/`。
   **禁止只回复「已记住」而不落盘**；写完回报「已写入知识库：<相对路径>」。
-- 一事实一文件，frontmatter `name/description/type/created/updated`，type ∈
-  `user|feedback|project|reference`；指针只进同目录 `MEMORY.md`；改事实更新旧笔记，推翻标
-  `> Superseded <日期>`，不删。
+- 一事实一文件，frontmatter `name/description/type/created/updated`；`name` **必须等于文件名**
+  （kebab slug；中文标题只放正文 H1 与索引钩子），type ∈ `user|feedback|project|reference`；
+  指针只进同目录 `MEMORY.md`；改事实更新旧笔记，推翻标 `> Superseded <日期>`，不删。
 - 跨会话任务 / 改动 ≥3 文件 / 上下文到 60% → 写 `status: active` 笔记 + 索引行加 `⚡`；
   只有目标达成或用户说结束时才降 `completed`。
 - 不存凭据；不重复 git 已有内容；全局只装跨项目的事。写完报 added/updated/archived/skipped。
