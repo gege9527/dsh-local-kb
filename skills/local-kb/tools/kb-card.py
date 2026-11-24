@@ -13,11 +13,11 @@ import os
 import re
 import sys
 
-# 默认知识库根：与环境变量保持一致（插件侧也读 KB_ROOT）
-DEFAULT_KB = os.environ.get("KB_ROOT") or "~/.local-kb"
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kb_common import CARD_DIR, CARD_VERSION, frontmatter, iter_docs, read_version, slug_of, version_path
+from kb_common import CARD_DIR, CARD_VERSION, frontmatter, iter_docs, read_version, resolve_root, slug_of, version_path
+
+# 默认知识库根：与插件设置同源（<parent>/.local-kb，缺省 ~/.local-kb）
+DEFAULT_KB = resolve_root()
 
 SUMMARY_CHARS = 200
 SUMMARY_MIN = 40  # 摘要短于此值时继续累加后续段落（引用块开头的文档常只剩"行记录"这种残句）

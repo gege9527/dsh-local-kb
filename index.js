@@ -14,9 +14,9 @@
  *
  * 零依赖、无构建：纯 ESM、node: builtins（node:https 发 WebDAV 请求）。
  */
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { constants as FS, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { access, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
 import { homedir, platform } from 'node:os'
 import http from 'node:http'
@@ -86,6 +86,11 @@ export const SYNC_STATE_DEFAULT = {
   lastCheckErrors: [],  // 前 5 条错误
   lastCheckWarns: [],   // 前 5 条警告
   lastCheckStats: null, // { memoryDirs, memories, docs, errors, warns }
+  // 基准指纹：库根换了，分片基准描述的就是另一个库，必须作废，否则增量会漏传。
+  rootPath: null,
+  staleBaseline: false,
+  // 改位置阶段：'copying' | 'verifying' | 'switching' | 'renaming' | null（设置页轮询它显示进度）
+  relocatePhase: null,
 }
 
 /** Sync 目录的写工具名（write 是整体替换；edit/str_replace/insert 是就地修改）。 */
@@ -96,11 +101,18 @@ function resolveDshHome(env = process.env) {
   return typeof fromEnv === 'string' && fromEnv.trim() !== '' ? resolve(fromEnv) : join(homedir(), '.dsh')
 }
 
-/** KB 根：与 local-kb 技能同一规则 —— KB_ROOT 环境变量优先，否则 ~/.local-kb。 */
-export function resolveKbRoot(env = process.env) {
-  const fromEnv = env.KB_ROOT
-  const root = typeof fromEnv === 'string' && fromEnv.trim() !== '' ? fromEnv.trim() : join(homedir(), '.local-kb')
-  return resolve(root)
+/** 知识库目录名固定：位置可以换，名字不可换（工具链契约）。 */
+export const KB_DIR_NAME = '.local-kb'
+
+/** 父目录 → 库根。名字硬拼，不接受、也不解析任何自定义库名。 */
+export function kbRootOf(parent) {
+  return resolve(parent, KB_DIR_NAME)
+}
+
+/** 生效的父目录：插件设置优先；没设置就用主目录（此时库根仍是 ~/.local-kb）。 */
+export function resolveParent(settings) {
+  const raw = settings && typeof settings.parent === 'string' ? settings.parent.trim() : ''
+  return raw !== '' ? resolve(raw) : homedir()
 }
 
 /**
@@ -408,10 +420,13 @@ export function judgeKbDelete(kbRoot, tool, args) {
   return undefined
 }
 
-/** 组合 guard：删除判定在前，索引上限在后（indexCap:false 可单独关上限）。 */
-export function kbGuard(kbRoot, { indexCap = true } = {}) {
+/** 组合 guard：删除判定在前，索引上限在后（indexCap:false 可单独关上限）。
+ *  第一个参数可以是路径字符串，也可以是 getter —— 改位置后判定跟着走。 */
+export function kbGuard(rootOrGetter, { indexCap = true } = {}) {
+  const rootOf = typeof rootOrGetter === 'function' ? rootOrGetter : () => rootOrGetter
   return (exec) => {
     try {
+      const kbRoot = rootOf()
       const remove = judgeKbDelete(kbRoot, exec?.name, exec?.arguments)
       if (remove !== undefined) return remove
       return indexCap ? judgeIndexWrite(kbRoot, exec?.name, exec?.arguments) : undefined
@@ -428,12 +443,22 @@ export function kbGuard(kbRoot, { indexCap = true } = {}) {
 export const SETTINGS_FILENAME = 'settings.json'
 
 // 自动同步默认关闭：避免新装用户一写入就把远端备份覆盖掉。
-const SETTINGS_DEFAULTS = { remoteDir: REMOTE_SYNC_DIR, autoSync: false, provider: 'custom' }
+// parent 是知识库父目录：库根固定为 <parent>/.local-kb。
+const SETTINGS_DEFAULTS = { parent: null, remoteDir: REMOTE_SYNC_DIR, autoSync: false, provider: 'custom' }
+
+/** 设置里的父目录：只接受绝对路径；非法值当没写。 */
+function sanitizeParent(value) {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (trimmed === '' || !isAbsolute(trimmed)) return undefined
+  return resolve(trimmed)
+}
 
 export function loadPluginSettings(dshHome) {
   try {
     const raw = JSON.parse(readFileSync(join(dshHome, 'local-kb', SETTINGS_FILENAME), 'utf8'))
     return {
+      parent: sanitizeParent(raw.parent) ?? null,
       remoteDir: sanitizeRemoteDir(raw.remoteDir) ?? SETTINGS_DEFAULTS.remoteDir,
       // 只有明确写了 true 才开；旧文件没有这个字段 → 按默认关闭
       autoSync: raw.autoSync === true,
@@ -447,6 +472,8 @@ export function loadPluginSettings(dshHome) {
 export function savePluginSettings(dshHome, patch) {
   const current = loadPluginSettings(dshHome)
   const next = {
+    // 显式传 null = 清回默认（主目录）；非法值保留原值。
+    parent: patch.parent === null ? null : (sanitizeParent(patch.parent) ?? current.parent),
     remoteDir: sanitizeRemoteDir(patch.remoteDir) ?? current.remoteDir,
     autoSync: typeof patch.autoSync === 'boolean' ? patch.autoSync : current.autoSync,
     provider: typeof patch.provider === 'string' && patch.provider.trim() ? patch.provider.trim() : current.provider,
@@ -458,6 +485,100 @@ export function savePluginSettings(dshHome, patch) {
     // 设置写不进去也不影响本次会话
   }
   return next
+}
+
+/* =========================================================================
+ * 改位置：预检 + 复制校验（切换与旧目录改名在 apply 里，需要内存状态）
+ * ======================================================================= */
+
+/** 时间戳 YYYYMMDDHHmmss（本地时区）：旧库目录名用，秒级防重名。 */
+export function stampNow(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return String(date.getFullYear()) + pad(date.getMonth() + 1) + pad(date.getDate()) +
+    pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds())
+}
+
+/** 旧库改名目标：<同目录>/.local-kb-old-<时间戳>。 */
+export function legacyDirOf(kbRoot, stamp = stampNow()) {
+  return join(dirname(resolve(kbRoot)), KB_DIR_NAME + '-old-' + stamp)
+}
+
+/** 递归统计文件数与总字节数（预检与校验都用它）。 */
+async function measureTree(dir) {
+  let files = 0
+  let bytes = 0
+  const walk = async (current) => {
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else if (entry.isFile()) {
+        files += 1
+        const info = await stat(full).catch(() => undefined)
+        if (info) bytes += info.size
+      }
+    }
+  }
+  await walk(dir)
+  return { files, bytes }
+}
+
+/**
+ * 预检：只读，不改任何东西。
+ * 拒绝条件 = 目标不合法 / 已存在同名文件夹 / 与当前库重叠 / 当前库不完整。
+ */
+export async function precheckRelocate({ kbRoot, parent }) {
+  const blockers = []
+  if (typeof parent !== 'string' || parent.trim() === '' || !isAbsolute(parent.trim())) {
+    return { ok: false, target: null, blockers: ['目标父目录必须是绝对路径'], plan: { files: 0, bytes: 0 } }
+  }
+  const parentPath = resolve(parent.trim())
+  const target = kbRootOf(parentPath)
+  const parentStat = await stat(parentPath).catch(() => undefined)
+  if (parentStat === undefined) blockers.push('目标父目录不存在')
+  else if (!parentStat.isDirectory()) blockers.push('目标父目录不是目录')
+  else {
+    try {
+      await access(parentPath, FS.W_OK)
+    } catch {
+      blockers.push('目标父目录不可写')
+    }
+  }
+  // 库名固定，目标只可能是 <parent>/.local-kb：已存在就整体拒绝，不做合并。
+  if (existsSync(target)) blockers.push('目标已存在同名文件夹 ' + KB_DIR_NAME)
+  if (target === resolve(kbRoot)) blockers.push('目标与当前位置相同')
+  else if (isInside(kbRoot, target) || isInside(target, kbRoot)) blockers.push('目标与当前知识库重叠')
+  if (!existsSync(join(kbRoot, 'paths.yaml'))) blockers.push('当前知识库缺少 paths.yaml，先确认库完整')
+  const plan = blockers.length === 0 ? await measureTree(kbRoot) : { files: 0, bytes: 0 }
+  return { ok: blockers.length === 0, target, blockers, plan }
+}
+
+/**
+ * 复制 + 校验 + 落位：复制到 <target>.incoming-<时间戳>/，比对文件数与字节数，
+ * 通过才 rename 成正式目录。失败删临时目录（不留半成品）。
+ */
+export async function relocateCopy({ kbRoot, parent, onPhase }) {
+  const pre = await precheckRelocate({ kbRoot, parent })
+  if (!pre.ok) return { ok: false, code: 'PRECHECK_FAILED', blockers: pre.blockers, target: pre.target }
+  const target = pre.target
+  const incoming = target + '.incoming-' + stampNow()
+  try {
+    onPhase?.('copying')
+    await cp(kbRoot, incoming, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true })
+    onPhase?.('verifying')
+    const source = await measureTree(kbRoot)
+    const copied = await measureTree(incoming)
+    if (source.files !== copied.files || source.bytes !== copied.bytes) {
+      throw new Error('校验不一致：源 ' + source.files + ' 文件 / ' + source.bytes + ' B，副本 ' +
+        copied.files + ' 文件 / ' + copied.bytes + ' B')
+    }
+    if (existsSync(target)) throw new Error('目标已存在同名文件夹 ' + KB_DIR_NAME)
+    await rename(incoming, target)
+    return { ok: true, target, plan: source }
+  } catch (error) {
+    await rm(incoming, { recursive: true, force: true }).catch(() => {})
+    return { ok: false, code: 'COPY_FAILED', reason: String(error?.message ?? error), target }
+  }
 }
 
 /** 分片键：按一级目录切，projects 再按项目 id 切。 */
@@ -479,7 +600,9 @@ class SyncState {
     this.kbRoot = kbRoot
     this.state = { ...SYNC_STATE_DEFAULT }
     this.legacyFile = join(kbRoot, SYNC_STATE_FILENAME)
-    this.dir = join(dshHome, 'local-kb', 'state', hashOf(kbRoot))
+    this.rootPath = resolve(kbRoot)
+    // 状态目录固定：位置统一后同一时刻只有一个库，不再按路径哈希分桶。
+    this.dir = join(dshHome, 'local-kb', 'state')
     this.metaFile = join(this.dir, 'meta.json')
     this.map = new Map()
     this.shardCache = new Map()
@@ -487,11 +610,19 @@ class SyncState {
   }
 
   async load() {
+    let storedRoot
     try {
       this.state = { ...SYNC_STATE_DEFAULT, ...JSON.parse(await readFile(this.metaFile, 'utf8')) }
+      storedRoot = typeof this.state.rootPath === 'string' ? this.state.rootPath : undefined
     } catch {
       // 还没同步过
     }
+    // 库根变了：分片基准描述的是另一个库，增量会漏传 —— 作废基准，下次按全量重传。
+    if (storedRoot !== undefined && storedRoot !== this.rootPath) {
+      this.state = { ...SYNC_STATE_DEFAULT, rootPath: this.rootPath, staleBaseline: true }
+      return
+    }
+    this.state.rootPath = this.rootPath
     try {
       const files = await listJsonFiles(this.dir)
       for (const file of files) {
@@ -519,12 +650,18 @@ class SyncState {
     return { ...this.state }
   }
 
+  /** 改位置后换根：基准保留（复制过来的内容与相对路径都没变），只更新指纹。 */
+  async retarget(newRoot) {
+    this.rootPath = resolve(newRoot)
+    await this.record({ rootPath: this.rootPath, staleBaseline: false })
+  }
+
   fileMapObject() {
     return Object.fromEntries(this.map)
   }
 
   async record(patch) {
-    this.state = { ...this.state, ...patch }
+    this.state = { ...this.state, ...patch, rootPath: this.rootPath }
     try {
       await mkdir(this.dir, { recursive: true })
       const tmp = this.metaFile + '.tmp'
@@ -569,11 +706,6 @@ class SyncState {
     }
     this.map = new Map(map)
   }
-}
-
-/** 状态目录按 KB 路径区分：一台机器可能有多个 KB_ROOT。 */
-function hashOf(text) {
-  return createHash('sha256').update(resolve(text)).digest('hex').slice(0, 16)
 }
 
 /** 递归列出目录下的 *.json；目录不存在返回空。 */
@@ -993,18 +1125,32 @@ export async function testLink({ url, user, password }) {
  * Plugin
  * ======================================================================= */
 
-export function apply(ctx, config = {}) {
-  const kbRoot = typeof config.kbRoot === 'string' && config.kbRoot.trim()
-    ? resolve(config.kbRoot.trim())
-    : resolveKbRoot()
+/** 插件内部固定策略：这些不是用户配置项，值写死，不接受外部覆盖。 */
+const FIXED = Object.freeze({
+  migrateLegacy: true,
+  indexCap: true,
+  injectContext: true,
+  injectMaxLines: DEFAULT_INDEX_MAX_LINES,
+  injectMaxBytes: DEFAULT_INDEX_MAX_BYTES,
+  injectDescriptions: true,
+  injectRules: true,
+  compactionReminder: true,
+  reminderPressure: undefined, // undefined → createCompactionReminder 用内置默认
+})
+
+export function apply(ctx, _config = {}) {
   const dshHome = resolveDshHome()
-  // 运行时设置：远端根目录、自动同步开关。改设置页即时生效，不必重启。
+  // 运行时设置：知识库父目录、远端根目录、自动同步开关。改设置页即时生效，不必重启。
   const pluginSettings = loadPluginSettings(dshHome)
+  // 库根只从设置派生：名字固定 .local-kb，位置由父目录决定。
+  // 改位置后立即生效 —— 所有闭包都通过 currentRoot() 取值，不缓存字符串。
+  let kbRoot = kbRootOf(resolveParent(pluginSettings))
+  const currentRoot = () => kbRoot
 
   // ---- 旧安装方式迁移：删掉复制出来的技能副本 + AGENTS.md 常驻块 ----
   // 必须跑在其它事情之前：技能根是 rank 400（user-dsh），会压过 bundled 的 600，
   // 旧副本不删就永远加载旧技能。只删带 .skill-version 标记的，删前备份。
-  if (config.migrateLegacy !== false) {
+  if (FIXED.migrateLegacy) {
     try {
       const migration = migrateLegacyInstall({ dshHome })
       if (migration.skillCopy === 'removed' || migration.agentsBlock === 'removed') {
@@ -1028,7 +1174,7 @@ export function apply(ctx, config = {}) {
   // 200 行 / 25KB 之前只写在 AGENTS.md 和 kb-check.py 里，模型写超了也能落盘。
   // guard 在写入前同步判定，只拦「越界且变大」，压缩写入照常放行。
   if (typeof ctx.tools?.guard === 'function') {
-    ctx.tools.guard(kbGuard(kbRoot, { indexCap: config.indexCap !== false }))
+    ctx.tools.guard(kbGuard(currentRoot, { indexCap: FIXED.indexCap }))
   }
 
   // ---- 每轮注入：记忆索引 + 知识地图（systemPrompt.context） ----
@@ -1054,12 +1200,12 @@ export function apply(ctx, config = {}) {
     }
   }
   const positiveInt = (value, fallback) => (Number.isInteger(value) && value > 0 ? value : fallback)
-  if (config.injectContext !== false) {
+  if (FIXED.injectContext) {
     const cache = new Map()
-    const maxLines = positiveInt(config.injectMaxLines, DEFAULT_INDEX_MAX_LINES)
-    const maxBytes = positiveInt(config.injectMaxBytes, DEFAULT_INDEX_MAX_BYTES)
+    const maxLines = FIXED.injectMaxLines
+    const maxBytes = FIXED.injectMaxBytes
     // 描述默认注入，但协议要求「一行钩子 ≤24 字」——源头写短，不在注入层裁。
-    const withDescriptions = config.injectDescriptions !== false
+    const withDescriptions = FIXED.injectDescriptions
     ctx.inject(['systemPrompt'], (inner) => {
       const prompt = inner.systemPrompt
       if (typeof prompt?.context !== 'function') return
@@ -1070,7 +1216,7 @@ export function apply(ctx, config = {}) {
         interpolate: false,
         text: (context) => {
           try {
-            return memoryIndexText({ kbRoot, cwd: sessionCwd(context), cache, maxLines, maxBytes, withDescriptions })
+            return memoryIndexText({ kbRoot: currentRoot(), cwd: sessionCwd(context), cache, maxLines, maxBytes, withDescriptions })
           } catch {
             return '' // 注入失败绝不拖垮请求
           }
@@ -1082,7 +1228,7 @@ export function apply(ctx, config = {}) {
         interpolate: false,
         text: (context) => {
           try {
-            return knowledgeMapText({ kbRoot, cwd: sessionCwd(context), cache })
+            return knowledgeMapText({ kbRoot: currentRoot(), cwd: sessionCwd(context), cache })
           } catch {
             return ''
           }
@@ -1094,7 +1240,7 @@ export function apply(ctx, config = {}) {
   // ---- 常驻规则：替代旧方案写进 $DSH_HOME/AGENTS.md 的 KB_LOCAL 块 ----
   // 走 systemPrompt.context 而不是改用户文件：插件一卸，effect 自动注销，零残留。
   // 内容与技能自带的 references/agents-snippet.md 同源，跟着插件版本走。
-  if (config.injectRules !== false) {
+  if (FIXED.injectRules) {
     const ruleCache = new Map()
     ctx.inject(['systemPrompt'], (inner) => {
       const prompt = inner.systemPrompt
@@ -1115,7 +1261,7 @@ export function apply(ctx, config = {}) {
   }
 
   // ---- 长对话提醒：把值得留的先写进 KB（每会话一次） ----
-  if (config.compactionReminder !== false) {
+  if (FIXED.compactionReminder) {
     const pressure = {}
     for (const name of ['tokenMeter', 'sessionProjections']) {
       ctx.inject([name], (inner) => {
@@ -1128,7 +1274,7 @@ export function apply(ctx, config = {}) {
         })
       })
     }
-    const reminder = createCompactionReminder(pressure, config.reminderPressure)
+    const reminder = createCompactionReminder(pressure, FIXED.reminderPressure)
     ctx.inject(['systemPrompt'], (inner) => {
       const prompt = inner.systemPrompt
       if (typeof prompt?.context !== 'function') return
@@ -1150,6 +1296,12 @@ export function apply(ctx, config = {}) {
   // ---- 写入即同步 hook：tools/result 监听（核心） ----
   const syncState = new SyncState(kbRoot, dshHome)
   let syncChain = syncState.ready.then(() => {}) // 串行化：同一时刻最多一个同步任务
+
+  /** 切换库根：只改内存与同步指纹；settings.json 与旧目录改名由调用方负责。 */
+  async function setRoot(newRoot) {
+    kbRoot = resolve(newRoot)
+    await syncState.retarget(kbRoot)
+  }
   let autoTimer = null
   ctx.effect(() => () => {
     if (autoTimer !== null) clearTimeout(autoTimer)
@@ -1192,7 +1344,7 @@ async function runKbCheck() {
   const python = platform() === 'win32' ? 'python' : 'python3'
   try {
     // --json：结构化拿错误/警告/统计，页面据此分项目展示，不解析人类可读文本
-    const result = await runKbCheckProcess(python, script, kbRoot, ['--json'])
+    const result = await runKbCheckProcess(python, script, currentRoot(), ['--json'])
     const status = result.code === 0 ? 'ok' : result.code === 2 ? 'warn' : 'failed'
     let parsed
     try {
@@ -1277,7 +1429,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
         await syncState.saveFileMap(new Map())
       }
       const result = await syncRoot({
-        kbRoot, url, user, password, previousMap,
+        kbRoot: currentRoot(), url, user, password, previousMap,
         remoteDir: pluginSettings.remoteDir,
       })
       await syncState.saveFileMap(new Map(Object.entries(result.fileMap)))
@@ -1335,14 +1487,14 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       //  - run_code：代码里有 fs 写调用且路径在 KB_ROOT 内（PTC 直写，绕过写工具）。
       let isKbWrite = false
       if (FILE_WRITE_TOOLS.has(tool) && filePath !== undefined) {
-        isKbWrite = isInside(kbRoot, filePath)
+        isKbWrite = isInside(currentRoot(), filePath)
       } else if (tool === 'str_replace_editor'
         && (args.command === 'create' || args.command === 'str_replace' || args.command === 'insert')
         && filePath !== undefined) {
-        isKbWrite = isInside(kbRoot, filePath)
-      } else if (tool === 'bash' && bashWritesKb(kbRoot, args)) {
+        isKbWrite = isInside(currentRoot(), filePath)
+      } else if (tool === 'bash' && bashWritesKb(currentRoot(), args)) {
         isKbWrite = true
-      } else if (tool === 'run_code' && codeWritesKb(kbRoot, args)) {
+      } else if (tool === 'run_code' && codeWritesKb(currentRoot(), args)) {
         isKbWrite = true
       }
       if (!isKbWrite) return
@@ -1394,6 +1546,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
           // 实测会把同一句话刷 4 遍（11-05 13:34 那个调研会话），噪音大于收益。
           reminded: { global: false, memory: false, web: false },
           sent: { global: 0, memory: 0, web: 0 },
+          // 已回传过的体检告警签名：同一组告警只提示一次；跨任务不重置（修好或换新告警才变）。
+          checkSig: null,
         }
         states.set(agent, st)
       }
@@ -1402,7 +1556,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
 
     /** 路径是否落在 KB（含 ~/.local-kb 简写兜底）。 */
     const touchesKb = (s) => typeof s === 'string' && s !== '' &&
-      (s.includes(kbRoot) || (kbRoot.includes('.local-kb') && s.includes('.local-kb')))
+      (s.includes(currentRoot()) || (currentRoot().includes('.local-kb') && s.includes('.local-kb')))
 
     /** 记录 KB 认知：kbChecked 必置；路径真实碰过记忆区才置 memoryChecked。 */
     const noteKbHit = (st, s) => {
@@ -1423,10 +1577,10 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       const toks = cmd.match(/(?<![A-Za-z0-9_.-])(?:~(?:\/|(?=[\s"'`|&;<>()]|$))|\/)(?!\/)[^\s"'`|&;<>()]*/g) || []
       for (const t of toks) {
         const e = expand(t)
-        if (isAbsolute(e) && !isInside(kbRoot, e)) out.push(e)
+        if (isAbsolute(e) && !isInside(currentRoot(), e)) out.push(e)
       }
       const workdir = typeof args?.workdir === 'string' && args.workdir.trim() !== '' ? expand(args.workdir) : ''
-      if (workdir !== '' && !isInside(kbRoot, workdir)) out.push(workdir)
+      if (workdir !== '' && !isInside(currentRoot(), workdir)) out.push(workdir)
       return out
     }
     /** 唯一硬闸判定：grep/rg 的目标（归一后）落在根或 home 本身。 */
@@ -1452,22 +1606,23 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       }
       return null
     })()
-    const kbGrep = kbSearchScript
+    // 惰性求值：位置改了提示里的路径要跟着变。
+    const kbGrep = () => (kbSearchScript
       ? 'python3 ' + kbSearchScript + ' "关键词"（先看它的置信提示）'
-      : 'grep -rn "关键词" ' + kbRoot + '/projects/<id>/ ' + kbRoot + '/docs/ --exclude-dir=archive'
+      : 'grep -rn "关键词" ' + currentRoot() + '/projects/<id>/ ' + currentRoot() + '/docs/ --exclude-dir=archive')
     const reminderTexts = {
       // 知识库没有覆盖项目/文档的总索引（只有记忆有 MEMORY.md），
       // 所以这里不能说「知识库有索引」——那是错误的定位信息。
       // 原来只写「换关键词再搜一次」+「仍无结果再全盘搜索」：既没给检索命令，又把兜底写成并列选项，
       // 等于替它确认全盘扫也行。现在给命令、把全盘限定为「确认库里没有之后」，并加写回闭环。
       global: '全盘扫描开销大。先换关键词用知识库检索再试一次（项目页/文档是中文正文，别名在 frontmatter）：' +
-        kbGrep + '；确认库里确实没有，再全盘搜索，搜完把结论补进知识库（下次不用再扫）。',
+        kbGrep() + '；确认库里确实没有，再全盘搜索，搜完把结论补进知识库（下次不用再扫）。',
       // 索引通常已由插件注入；提醒只在「没看到注入内容」时有意义。
       memory: '任务若涉及记忆（上次说过/项目上下文/偏好/之前配置），记忆只从知识库取：' +
         '上下文里已有「项目记忆 / 父项目记忆 / 全局记忆」三段索引就直接用；' +
-        '真的缺了才 read ' + kbRoot + '/projects/<id>/memory/MEMORY.md 或 ' + kbRoot + '/memory/MEMORY.md。' +
+        '真的缺了才 read <KB_ROOT>/projects/<id>/memory/MEMORY.md 或 <KB_ROOT>/memory/MEMORY.md。' +
         '不涉及记忆可忽略本提示。',
-      web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep + '；外部知识查询可忽略本提示。',
+      web: '若在查本地项目/代码/配置相关问题，先查知识库：' + kbGrep() + '；外部知识查询可忽略本提示。',
     }
     const summaryOf = { global: '提示：本地检索优先用知识库', memory: '记忆先行：用注入的三段记忆索引', web: '提示：本地问题先查知识库' }
     /** 同一类提醒全会话最多 3 次（每轮最多 1 次，靠 agent/pre-step 重置 reminded）。
@@ -1484,7 +1639,7 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
     const memoryIndexInjected = (agent) => {
       try {
         return memoryIndexText({
-          kbRoot,
+          kbRoot: currentRoot(),
           cwd: sessionCwd({ agent }) ?? process.cwd(),
           cache: memoryReminderCache,
           maxLines: DEFAULT_INDEX_MAX_LINES,
@@ -1513,8 +1668,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
           if (st && isGlobalSearch(cmd, args) && !st.kbChecked) {   // 唯一硬闸（无 agent 直调永不拦）
             return {
               kind: 'deny',
-              reason: '先查知识库：' + kbGrep + ' 或 read KB 内文件；KB 未命中再全盘搜索' +
-                (st && !st.memoryChecked ? '。涉及记忆先看注入的三段记忆索引（缺了才 read ' + kbRoot + '/projects/<id>/memory/MEMORY.md' : '') +
+              reason: '先查知识库：' + kbGrep() + ' 或 read KB 内文件；KB 未命中再全盘搜索' +
+                (st && !st.memoryChecked ? '。涉及记忆先看注入的三段记忆索引（缺了才 read <KB_ROOT>/projects/<id>/memory/MEMORY.md' : '') +
                 '。本会话查过 KB 后放行',
             }
           }
@@ -1559,6 +1714,18 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
             reminder = await makeReminder(reminderTexts.memory, summaryOf.memory); noteRemind(st, 'memory')
           }
         }
+        // 体检告警回传：写完 KB 后 kb-check 在防抖窗口里跑完，下一次工具调用才拿得到结果。
+        // 用告警签名去重：同一组告警只提示一次（修好或换新告警才再提），不制造噪音。
+        if (!reminder) {
+          const built = buildCheckReminder(
+            { status: syncState.state.lastCheckStatus, warns: syncState.state.lastCheckWarns },
+            st.checkSig,
+          )
+          if (built) {
+            st.checkSig = built.sig
+            reminder = await makeReminder(built.text, CHECK_REMINDER_SUMMARY)
+          }
+        }
         if (!reminder) return decision
         if (decision.kind === 'block') {
           return { kind: 'block', feedback: decision.feedback, additionalContexts: [reminder, ...(decision.additionalContexts ?? [])] }
@@ -1591,7 +1758,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       return
     }
     const handlers = createApiHandlers({
-      kbRoot, dshHome, syncState, runSync, pluginSettings,
+      getRoot: currentRoot, setRoot, awaitSync: () => syncChain.catch(() => {}),
+      dshHome, syncState, runSync, pluginSettings,
       getCredentials: () => ctx.get('credentials'),
     })
     // 每条路都必须带 requestBody：dsh 靠它决定请求体怎么喂给 handler。
@@ -1602,6 +1770,8 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
       { path: API_BASE + '/test-link', methods: ['POST'], requestBody: 'buffered', fetch: handlers.testLink },
       { path: API_BASE + '/download', methods: ['POST'], requestBody: 'buffered', fetch: handlers.download },
       { path: API_BASE + '/settings', methods: ['POST'], requestBody: 'buffered', fetch: handlers.settings },
+      { path: API_BASE + '/relocate/precheck', methods: ['POST'], requestBody: 'buffered', fetch: handlers.relocatePrecheck },
+      { path: API_BASE + '/relocate', methods: ['POST'], requestBody: 'buffered', fetch: handlers.relocate },
       { path: API_BASE + '/clear', methods: ['POST'], requestBody: 'buffered', fetch: handlers.clear },
     ]
     const failures = []
@@ -1633,7 +1803,9 @@ function describeMigration(migration) {
 
 
 /** 组装设置页 API 的三个 handler（Web Fetch API：Request → Response）。 */
-function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings, getCredentials }) {
+function createApiHandlers({ getRoot, setRoot, awaitSync, dshHome, syncState, runSync, pluginSettings, getCredentials }) {
+  /** 每个 handler 开头取一次当前库根：改位置后立刻是新值。 */
+  const rootNow = () => getRoot()
   const resolveRefFor = async (ref) => {
     const creds = getCredentials()
     if (!creds || typeof creds.resolve !== 'function') return undefined
@@ -1644,6 +1816,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
   return {
     /** GET /api/local-kb/state：设置页打开时读取的位置、凭据回显与同步状态。 */
     state: async () => {
+      const kbRoot = rootNow()
       // message 级状态（时间/结果/错误）返回；fileMap 只在插件内部作增量基准，
       // 体积大且 client 不需要（状态已持久化到 .kb-sync-state.json）。
       const st = syncState.snapshot()
@@ -1667,8 +1840,10 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
           // 页面要用统计与警告列表：只回 lastCheckError 会让「记忆 N 条 / 警告」永远是空的。
           lastCheckStats: st.lastCheckStats,
           lastCheckWarns: st.lastCheckWarns,
+          relocatePhase: st.relocatePhase || null,
         },
         settings: {
+          parent: pluginSettings.parent,
           remoteDir: pluginSettings.remoteDir,
           autoSync: pluginSettings.autoSync,
           provider: pluginSettings.provider,
@@ -1679,6 +1854,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
 
     /** GET /api/local-kb/overview：知识库全貌（项目、文档、记忆用量），只读。 */
     overview: async () => {
+      const kbRoot = rootNow()
       const entries = new Map()
       try {
         for (const entry of parsePathsYaml(readFileSync(join(kbRoot, 'paths.yaml'), 'utf8'))) {
@@ -1757,6 +1933,63 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
       return jsonResponse(200, { ok: true, kbRoot, projects, docs, docDirs })
     },
 
+    /** POST /api/local-kb/relocate/precheck：只读预检（目标合法性 / 大小 / 拒绝原因）。 */
+    relocatePrecheck: async (request) => {
+      let body = {}
+      try {
+        body = await request.json()
+      } catch {
+        body = {}
+      }
+      const parent = body && typeof body.parent === 'string' ? body.parent : ''
+      const pre = await precheckRelocate({ kbRoot: getRoot(), parent })
+      return jsonResponse(200, { ok: pre.ok, target: pre.target, blockers: pre.blockers, plan: pre.plan })
+    },
+
+    /** POST /api/local-kb/relocate：复制 → 校验 → 切换 → 旧目录改名。 */
+    relocate: async (request) => {
+      let body = {}
+      try {
+        body = await request.json()
+      } catch {
+        body = {}
+      }
+      const parent = body && typeof body.parent === 'string' ? body.parent.trim() : ''
+      if (parent === '') return jsonResponse(200, { ok: false, code: 'BAD_REQUEST', blockers: ['缺少目标父目录'] })
+      // 正在同步就先等它收尾，避免边搬边传。
+      await awaitSync()
+      const current = getRoot()
+      const phase = (name) => { void syncState.record({ relocatePhase: name }) }
+      phase('copying')
+      const copy = await relocateCopy({ kbRoot: current, parent, onPhase: phase })
+      if (!copy.ok) {
+        void syncState.record({ relocatePhase: null })
+        return jsonResponse(200, { ok: false, ...copy })
+      }
+
+      // 切换：写设置 → 换内存根
+      phase('switching')
+      const next = savePluginSettings(dshHome, { parent })
+      if (next.parent === null) {
+        return jsonResponse(200, { ok: false, code: 'SETTINGS_FAILED', target: copy.target })
+      }
+      Object.assign(pluginSettings, next)
+      await setRoot(copy.target)
+
+      // 收尾：旧库改名保留。失败只是没改名，库已在新位置可用。
+      phase('renaming')
+      let legacyDir = null
+      try {
+        const candidate = legacyDirOf(current)
+        await rename(current, candidate)
+        legacyDir = candidate
+      } catch {
+        legacyDir = null
+      }
+      void syncState.record({ relocatePhase: null })
+      return jsonResponse(200, { ok: true, kbRoot: copy.target, legacyDir, plan: copy.plan })
+    },
+
     /** POST /api/local-kb/settings：保存远端根目录、自动同步开关、服务商标识。 */
     settings: async (request) => {
       let body = {}
@@ -1803,6 +2036,7 @@ function createApiHandlers({ kbRoot, dshHome, syncState, runSync, pluginSettings
 
     /** POST /api/local-kb/download：从云端下载，覆盖本地同名文件（本地多余文件保留）。 */
     download: async () => {
+      const kbRoot = rootNow()
       const url = await resolveRefFor(CRED_URL_REF)
       if (!url) return jsonResponse(200, { ok: false, reason: '未配置 WebDAV 链接' })
       const user = (await resolveRefFor(CRED_USER_REF)) || ''
@@ -1907,6 +2141,35 @@ export function createCompactionReminder(pressure = {}, threshold = REMINDER_PRE
     if (tokens / window < ratio) return ''
     reminded.add(session)
     return COMPACTION_REMINDER_TEXT
+  }
+}
+
+/* =========================================================================
+ * 体检告警回传（闭环）
+ * -------------------------------------------------------------------------
+ * 写入 KB 后插件会跑 kb-check，但结果历史上只落设置页状态（runKbCheck → syncState），
+ * 模型自己看不到 —— 同一个坑会反复复发。这里把「最近一次告警」做成一条提醒注入上下文，
+ * 用告警文本签名去重：同一组告警只说一次，修好或换新告警才重新提示。
+ * ======================================================================= */
+export const CHECK_REMINDER_SUMMARY = '提示：知识库体检有警告，按提示修'
+
+/** 纯函数（供单测）：给定最近一次体检结果与已提示签名，返回 { text, sig } 或 null。 */
+export function buildCheckReminder(lastCheck = {}, seenSig) {
+  const status = lastCheck?.status
+  if (status !== 'warn' && status !== 'failed') return null
+  const warns = Array.isArray(lastCheck?.warns)
+    ? lastCheck.warns.filter((w) => typeof w === 'string' && w.trim() !== '')
+    : []
+  if (warns.length === 0) return null
+  const sig = status + '\n' + warns.join('\n')
+  if (sig === seenSig) return null
+  const head = status === 'failed' ? '知识库体检有错误' : '知识库体检有警告'
+  const lines = warns.slice(0, 2).map((w) => '· ' + w).join('\n')
+  return {
+    text: head + '（最近一次 kb-check，来自你写过或改过的知识库）：\n' + lines + '\n' +
+      '按提示修：补 frontmatter / 把索引钩子改到 ≤24 字 / 给进度段加 `> 截至 YYYY-MM-DD：…`；' +
+      '改完跑 `python3 <技能目录>/tools/kb-check.py` 确认。与本任务无关可忽略本提示。',
+    sig,
   }
 }
 

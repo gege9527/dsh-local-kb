@@ -28,13 +28,13 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kb_common import kebab_seg, path_segments, shortest_unique_suffix
+from kb_common import kebab_seg, path_segments, resolve_root, shortest_unique_suffix
 
 CJK = r"\u4e00-\u9fff"
 TYPES = {"user", "feedback", "project", "reference"}
 STATUSES = {"active", "completed", "archived"}
 STALE = re.compile(r"待办|进行中|正在进行|正在编译|当前瓶颈|未完成|下一步")
-DEFAULT_KB = os.environ.get("KB_ROOT") or "~/.local-kb"
+DEFAULT_KB = resolve_root()
 SOFT_LINES, SOFT_KB = 150, 20
 HARD_LINES, HARD_KB = 200, 25
 # 索引行钩子上限：超过就是把内容写回索引（one short hook + link）。
@@ -289,9 +289,9 @@ def check_memory_dir(d):
     if idx_lines > NEAR_INJECT_LINES:
         index_near_inject_cap.append("%s(%d 行)" % (rel_d, idx_lines))
     # 索引行 = 一行钩子 + 链接：钩子写长等于把笔记内容渗漏回索引。
-    longest = 0
-    long_hook_lines = 0
-    for line in idx.split("\n"):
+    # 收集 (行号, 字数)：告警要能直接指到 MEMORY.md 的行，否则没人愿意去数 11 行。
+    long_spots = []
+    for no, line in enumerate(idx.split("\n"), 1):
         if not line.lstrip().startswith("- ") or "](" not in line:
             continue
         m = re.search(r"\]\([^)]*\)\s*—\s*(.+)$", line)
@@ -299,10 +299,9 @@ def check_memory_dir(d):
             continue
         hook = m.group(1).strip()
         if len(hook) > HOOK_MAX_CHARS:
-            long_hook_lines += 1
-            longest = max(longest, len(hook))
-    if long_hook_lines:
-        index_long_hooks.append((rel_d, long_hook_lines, longest))
+            long_spots.append((no, len(hook)))
+    if long_spots:
+        index_long_hooks.append((rel_d, long_spots))
     notes = [f for f in os.listdir(d) if f.endswith(".md") and f != "MEMORY.md"]
     n = 0
     active_count = 0
@@ -341,10 +340,16 @@ def check_memory_dir(d):
             active_count += 1
         # 时效词只在「还可能过期」的笔记上算信号：completed/archived 里的「下一步」
         # 是历史叙述（实测 2/2 误报），不再报警。
-        if st in (None, "active") and STALE.search(text) and t in ("user", "feedback", "project"):
-            body_txt = text.split("---", 2)[-1]
-            if not re.search(r"^> .*(?:截至|Superseded)", body_txt, re.M):
-                warns.append("记忆含未标注的时效性内容(待办/进行中，缺历史化标注): %s" % rel)
+        # 告警带行号 + 给修法：这条要回传模型，光说「未标注」它不知道去哪儿改。
+        if st in (None, "active") and t in ("user", "feedback", "project"):
+            hit = STALE.search(text)
+            if hit is not None:
+                body_txt = text.split("---", 2)[-1]
+                if not re.search(r"^> .*(?:截至|Superseded)", body_txt, re.M):
+                    line_no = text.count("\n", 0, hit.start()) + 1
+                    warns.append("记忆含未标注的时效性内容(待办/进行中，缺历史化标注): %s:%d"
+                                 "（进度块首行加 `> 截至 YYYY-MM-DD：…`，任务已完则改 status: completed）"
+                                 % (rel, line_no))
         body = text.split("---", 2)[-1]
         # 项目记忆里的相对路径按项目根解析，全局记忆按 KB 根；两处都不在才报失效。
         base_dir = KB if rel_d == "memory" else os.path.join(KB, "projects", rel_d.split(os.sep)[1])
@@ -576,11 +581,14 @@ if os.path.isdir(PROJECT_ROOT_ROOT):
 
 # 注入质量：钩子超长（内容渗漏回索引）/ 索引接近注入上限
 if index_long_hooks:
-    total = sum(n for _, n, _ in index_long_hooks)
-    worst = max(index_long_hooks, key=lambda item: item[2])
-    warns.append("记忆索引钩子超长 %d 行（建议 ≤ %d 字，最长 %d 字）：%s —— 把内容移回笔记"
-                 % (total, HOOK_MAX_CHARS, worst[2],
-                    "；".join("%s×%d" % (rel_d, n) for rel_d, n, _ in index_long_hooks[:6])))
+    spots = []
+    for rel_d, rows in index_long_hooks:
+        for no, size in rows:
+            spots.append("%s/MEMORY.md:%d(%d字)" % (rel_d, no, size))
+    longest = max(size for _rel, rows in index_long_hooks for _no, size in rows)
+    more = "" if len(spots) <= 8 else "；等 %d 处" % (len(spots) - 8)
+    warns.append("记忆索引钩子超长 %d 行（建议 ≤ %d 字，最长 %d 字）：%s%s —— 照行号把内容移回笔记"
+                 % (len(spots), HOOK_MAX_CHARS, longest, "；".join(spots[:8]), more))
 if index_near_inject_cap:
     warns.append("记忆索引接近注入上限（注入默认 %d 行）：%s —— 归档已完成的记忆"
                  % (NEAR_INJECT_LINES, "、".join(index_near_inject_cap[:6])))

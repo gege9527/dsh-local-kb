@@ -13,8 +13,12 @@ import { apply } from '../index.js'
 // 其余全放行：web、find、codegraph、read 任意路径、home 一级目录、workdir 定点。
 // 提醒（post-execute additionalContexts）：记忆未读 / 认知后全盘搜索 / web 首搜；
 // 每类每任务 1 次，且全会话上限 3 次（防长会话刷屏，同时保留后续任务不失忆）。
-const KB_ROOT = '/tmp/fake-kb'
+// 库根固定为 <parent>/.local-kb：位置改由插件设置里的父目录决定。
+const KB_PARENT = '/tmp/fake-kb'
+const KB_ROOT = path.join(KB_PARENT, '.local-kb')
 const HOME = homedir()
+fs.mkdirSync(path.join(process.env.DSH_HOME, 'local-kb'), { recursive: true })
+fs.writeFileSync(path.join(process.env.DSH_HOME, 'local-kb', 'settings.json'), JSON.stringify({ parent: KB_PARENT }))
 
 const handlers = {}
 const ctx = {
@@ -23,7 +27,7 @@ const ctx = {
   inject() {},
   effect() {},
 }
-apply(ctx, { kbRoot: KB_ROOT, injectContext: false })
+apply(ctx)
 
 const pre = handlers['tools/pre-execute']?.[0]
 const post = handlers['tools/post-execute']?.[0]

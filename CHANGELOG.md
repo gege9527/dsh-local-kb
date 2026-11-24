@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.6.6 — 2026-11-24
+
+### 位置与配置收敛
+
+- **位置只有一个来源**：`$DSH_HOME/local-kb/settings.json` 的 `parent`，库根固定 `<parent>/.local-kb`。
+  目录名是工具链契约，不接受自定义库名。
+- **删掉 10 项插件配置**：`injectContext` / `injectMaxLines` / `injectMaxBytes` / `injectDescriptions` /
+  `injectRules` / `indexCap` / `compactionReminder` / `reminderPressure` / `migrateLegacy` / `kbRoot`
+  都是内部固定策略，值写死，不再读 `cordis.patch.yml`。`cordis.patch.yml` 里 `local-kb` 行去掉 `config`。
+- **删掉 `KB_ROOT` 环境变量**：插件与脚本读同一份设置，位置参数仍可用，不再需要 shell 配置。
+- **脚本同源**：`kb_common.resolve_root()` 读 `settings.json` 的 `parent`，缺省回落 `~/.local-kb`；
+  `kb-search` / `kb-check` / `kb-card` 三个脚本改用它。
+- **同步状态去哈希**：目录固定 `$DSH_HOME/local-kb/state/`（原按路径 sha256 分桶）。
+  `meta.rootPath` 记录基准指纹 —— 库根变了就作废基准、下次全量重传，否则增量会漏传。
+- **文档**：README「配置」「知识库位置」重写；技能里 `KB_ROOT` 覆盖说明改为「设置页换位置」。
+- **测试**：默认根断言改读 `settings.parent`；`apply` 不再接受 `kbRoot` 参数。
+
+### 设置页改位置
+
+- **位置卡可改位置**：填父目录 → 预检 → 确认 → 迁移，设置页显示当前阶段（复制 / 校验 / 切换 / 改名）。
+- **预检拒绝**：父目录不可写、目标已有同名 `.local-kb`、与当前库重叠、库缺 `paths.yaml` —— 拒绝时不做任何改动。
+- **迁移四步**：复制到 `<父目录>/.local-kb.incoming-<时间>/` → 比对文件数与字节数 → 写设置并换内存根
+  （立即生效，不用重启）→ 旧目录改名 `.local-kb-old-<YYYYMMDDHHmmss>`。
+- **失败不留半成品**：复制/校验失败删临时目录；切换成功但改名失败不影响库可用。
+- **测试**：新增 `relocate.spec`（预检拒绝矩阵 + 复制校验 + 命名规则）与 `relocate-e2e.spec`
+  （经 API 走完整链路，验证库根热生效）。
+
+### 体检告警闭环
+
+- **告警回传**：写入知识库后的 `kb-check` 结果不再只落设置页状态——未处理的警告经 `tools/post-execute`
+  附到下一次工具结果里，模型当场就看到「哪条、第几行、怎么修」。同一组告警只提示一次
+  （按告警文本签名去重），修好或换新告警才再提示。
+- **告警带定位**：时效性警告带 `文件:行` 并给修法（加 `> 截至 YYYY-MM-DD：…` 或改 `status: completed`）；
+  索引钩子超长警告列出 `MEMORY.md:行(字数)`，最多 8 处，其余计数。
+- **协议补格式**：`references/memory.md` 写明历史化标注格式，以及 `status: active` 与无 `status` 的
+  项目笔记都会触发时效检查——此前只有校验器知道，读协议的人无从遵循。
+- **测试**：`kb-check.spec` 加行号与修法断言、超长钩子用例；`reminder.spec` 覆盖告警回传的去重与边界。
+
+### 后续计划
+
+- 历史版本备份：服务端 `versions/`，每 5 次写入打包一次，保留 5 份，恢复由人工下载解压；
+  镜像删除需排除 `versions/`。
+
 ## 0.6.5 — 2026-11-20
 
 ### 记忆字段与规则一致性

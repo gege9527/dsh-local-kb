@@ -7,9 +7,13 @@ import { apply } from '../index.js'
 // 这里只验证注册形状与 handler 行为；401/403 由 dsh 的 connection 层负责，
 // 需要真实 host 才能复现（见 README 的验证命令）。
 
-const KB_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-api-'))
+// 库根固定为 <parent>/.local-kb：位置由插件设置里的父目录决定。
+const KB_PARENT = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-api-'))
+const KB_ROOT = path.join(KB_PARENT, '.local-kb')
 // 状态目录跟着测试走，不写用户真实的 ~/.dsh
 process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-api-home-'))
+fs.mkdirSync(path.join(process.env.DSH_HOME, 'local-kb'), { recursive: true })
+fs.writeFileSync(path.join(process.env.DSH_HOME, 'local-kb', 'settings.json'), JSON.stringify({ parent: KB_PARENT }))
 
 const mk = (rel, text) => {
   const abs = path.join(KB_ROOT, rel)
@@ -67,7 +71,7 @@ function makeCtx() {
   }
 }
 
-apply(makeCtx(), { kbRoot: KB_ROOT })
+apply(makeCtx())
 
 const results = []
 const check = (name, ok, detail = '') => {
@@ -75,9 +79,11 @@ const check = (name, ok, detail = '') => {
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (ok ? '' : '  ' + detail))
 }
 
-check('注册 7 条路由', routes.length === 7, 'got ' + routes.length)
+check('注册 9 条路由', routes.length === 9, 'got ' + routes.length)
 const byPath = new Map(routes.map((r) => [r.path, r]))
 check('state 路由存在', byPath.has('/api/local-kb/state'))
+check('relocate/precheck 路由存在', byPath.has('/api/local-kb/relocate/precheck'))
+check('relocate 路由存在', byPath.has('/api/local-kb/relocate'))
 check('overview 路由存在', byPath.has('/api/local-kb/overview'))
 check('overview 只接受 GET', JSON.stringify(byPath.get('/api/local-kb/overview')?.methods) === '["GET"]')
 check('sync 路由存在', byPath.has('/api/local-kb/sync'))

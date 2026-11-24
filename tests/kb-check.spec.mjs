@@ -70,6 +70,8 @@ const staleWarns = parsed.warns.filter((w) => w.includes('时效性'))
 check('active 笔记仍报时效', staleWarns.some((w) => w.includes('a.md')), staleWarns.join(' | '))
 check('无 status 的 feedback 仍报时效', staleWarns.some((w) => w.includes('tech.md')), staleWarns.join(' | '))
 check('completed 笔记不报时效', !staleWarns.some((w) => w.includes('done.md')), staleWarns.join(' | '))
+check('时效告警带行号', staleWarns.some((w) => /a\.md:\d+/.test(w)), staleWarns.join(' | '))
+check('时效告警给修法', staleWarns.some((w) => w.includes('截至')), staleWarns.join(' | '))
 
 // 2. --fix 默认只预览，不落盘
 const before = memIndex()
@@ -114,6 +116,14 @@ check('## completed 段里的 completed 不报', !p3.some((e) => e.includes('rea
 // 6. type 分组的索引不触发 status 分组校验（opt-in）
 check('type 分组索引不做 status 校验', !errorsOf('p1').some((e) => e.includes('索引 ##')), errorsOf('p1').join(' | '))
 
+// 8. 告警必须能定位：钩子超长带 文件:行 与字数，才有人愿意照行改
+write('projects/p4/p4.md', projectPage('p4'))
+write('projects/p4/memory/MEMORY.md', '# Index\n\n## feedback\n- [长钩子](long.md) — 这是一条超过二十四个字的索引钩子用于验证行号定位是否准确\n')
+write('projects/p4/memory/long.md', note(['name: long', 'description: 长钩子', 'type: feedback', 'created: 2026-01-01', 'updated: 2026-01-02'], '正文。'))
+const hookWarns = JSON.parse(run('--json').stdout).warns.filter((w) => w.includes('钩子超长'))
+check('钩子超长告警带 文件:行', hookWarns.some((w) => w.includes('projects/p4/memory/MEMORY.md:4')), hookWarns.join(' | '))
+check('钩子超长告警带字数', hookWarns.some((w) => /\(\d+字\)/.test(w)), hookWarns.join(' | '))
+
 // 7. 命名规则：id 必须等于「最短唯一路径后缀」，且不得重复
 const kb2 = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-check-move-'))
 const w2 = (rel, text) => {
@@ -145,10 +155,15 @@ check('id 重复报错', parsed2.errors.some((e) => e.includes('项目 id 重复
 check('符合规则的条目不再报', !parsed2.errors.some((e) => e.includes('good→')), parsed2.errors.join(' | '))
 
 
-// 默认根：KB_ROOT 环境变量优先于 ~/.local-kb（与插件侧一致）
-const envRoot = path.join(os.tmpdir(), 'kb-env-root-' + process.pid)
-const envOut = spawnSync(py, [tool, '--json'], { encoding: 'utf8', env: { ...process.env, KB_ROOT: envRoot } })
-check('默认根读 KB_ROOT', envOut.stdout.includes(envRoot) || envOut.stderr.includes(envRoot), envOut.stdout + envOut.stderr)
+// 默认根：插件设置里的 parent 决定库根（库名固定 .local-kb），与插件侧同源
+const cfgHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cfg-home-'))
+const cfgParent = path.join(os.tmpdir(), 'kb-cfg-parent-' + process.pid)
+fs.mkdirSync(path.join(cfgHome, 'local-kb'), { recursive: true })
+fs.writeFileSync(path.join(cfgHome, 'local-kb', 'settings.json'), JSON.stringify({ parent: cfgParent }))
+const cfgRoot = path.join(cfgParent, '.local-kb')
+const cfgOut = spawnSync(py, [tool, '--json'], { encoding: 'utf8', env: { ...process.env, DSH_HOME: cfgHome } })
+check('默认根读 settings.parent', cfgOut.stdout.includes(cfgRoot) || cfgOut.stderr.includes(cfgRoot), cfgOut.stdout + cfgOut.stderr)
+fs.rmSync(cfgHome, { recursive: true, force: true })
 
 // 项目 id 推导要认 Windows 反斜杠与盘符
 const segCode = [

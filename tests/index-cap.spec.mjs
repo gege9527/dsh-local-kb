@@ -9,7 +9,11 @@ import { apply, judgeIndexWrite } from '../index.js'
 
 // ---- 记忆索引硬上限：只拦「越界且变大」，压缩写入放行 ----
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cap-'))
+// 库根固定为 <parent>/.local-kb：位置由插件设置里的父目录决定。
+const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-cap-'))
+const root = path.join(parent, '.local-kb')
+fs.mkdirSync(path.join(process.env.DSH_HOME, 'local-kb'), { recursive: true })
+fs.writeFileSync(path.join(process.env.DSH_HOME, 'local-kb', 'settings.json'), JSON.stringify({ parent }))
 const idx = path.join(root, 'memory', 'MEMORY.md')
 fs.mkdirSync(path.dirname(idx), { recursive: true })
 
@@ -81,18 +85,13 @@ const mkCtx = () => ({
   },
   tools: { guard: (fn) => { captured = fn } },
 })
-apply(mkCtx(), { kbRoot: root, injectContext: false })
+apply(mkCtx())
 check('apply 注册了 guard', typeof captured, 'function')
 check('注册的 guard 拒绝超限写入', typeof captured({ name: 'write', arguments: write(line(201)) }), 'string')
 
-let captured2
-const ctx2 = mkCtx()
-ctx2.tools = { guard: (fn) => { captured2 = fn } }
-apply(ctx2, { kbRoot: root, indexCap: false, injectContext: false })
-check('indexCap:false 仍注册 guard（删除拦截照常）', typeof captured2, 'function')
-check('indexCap:false 时超限写入放行', captured2({ name: 'write', arguments: write(line(201)) }), undefined)
+// 索引上限不再可配置：apply 后恒为启用（上面已断言拒绝超限写入）。
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)
-fs.rmSync(root, { recursive: true, force: true })
+fs.rmSync(parent, { recursive: true, force: true })
 if (failed > 0) process.exitCode = 1

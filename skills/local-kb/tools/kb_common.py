@@ -8,6 +8,7 @@
 只依赖标准库；被同目录脚本 import（python3 tools/kb-card.py 时脚本目录在 sys.path[0]）。
 """
 
+import json
 import os
 import re
 
@@ -18,6 +19,27 @@ VERSION_FILE = ".card-version"
 # 检索端按它判断整库重建。
 CARD_VERSION = 7
 SKIP_DIRS = {".kb-index", "archive", "node_modules", ".git"}
+
+# 知识库目录名固定：位置可以换，名字不可换。
+DEFAULT_KB_DIR = ".local-kb"
+
+
+def resolve_root():
+    """知识库根：父目录来自插件设置，库名固定 <parent>/.local-kb。
+
+    设置文件是 $DSH_HOME/local-kb/settings.json（DSH_HOME 默认 ~/.dsh）。
+    没有设置、读不动、父目录非法 → ~/.local-kb，与插件侧默认一致。
+    脚本的位置参数仍然优先：第一个位置参数就是库路径。
+    """
+    dsh_home = os.environ.get("DSH_HOME") or os.path.expanduser("~/.dsh")
+    try:
+        with open(os.path.join(dsh_home, "local-kb", "settings.json"), encoding="utf-8") as handle:
+            parent = (json.load(handle) or {}).get("parent")
+    except Exception:
+        parent = None
+    if isinstance(parent, str) and parent.strip():
+        return os.path.join(os.path.expanduser(parent.strip()), DEFAULT_KB_DIR)
+    return os.path.expanduser(os.path.join("~", DEFAULT_KB_DIR))
 
 
 def version_path(cards_dir):

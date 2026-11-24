@@ -50,7 +50,8 @@ description: >-
 
 - 默认：`~/.local-kb/`（解析为 `$HOME/.local-kb/`，主目录根下隐藏目录，跨设备同一相对路径）
   Windows：路径同为 `%USERPROFILE%\.local-kb`，需隐藏可执行 `attrib +h`
-- 覆盖：环境变量 `KB_ROOT`（绝对路径）。覆盖时校验存在且可写。
+- 换位置：DSH 设置页 → 知识库位置（选父目录）。库根固定 `<父目录>/.local-kb`，目录名不可改。
+  插件与脚本读同一份设置（`$DSH_HOME/local-kb/settings.json`）；手动跑脚本可直接给路径参数。
 - 首次运行：目录不存在则按 `references/templates.md` 的「骨架文件模板」创建 README.md、paths.yaml、memory/MEMORY.md。
 - 结构（首次运行自动创建缺失目录）：
 
@@ -217,8 +218,8 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 
 - 项目页会过期：定位前重新读源码确认，别信页面里记的行号。
 - 工具后装：库里的降级产物不会自动升级，用 `refresh <名>` 重跑；多处降级时批量提示用户。
-- **KB_ROOT 是数据不是代码**：默认根在用户主目录隐藏目录（`~/.local-kb/`），技能更新/重装不会覆盖它。
-  换设备时同步该目录即可；`KB_ROOT` 环境变量可指向任意位置。
+- **知识库是数据不是代码**：默认根在用户主目录隐藏目录（`~/.local-kb/`），技能更新/重装不会覆盖它。
+  换设备时同步该目录即可；要换本机位置走设置页（父目录），库名固定 `.local-kb`。
 - 新增文档类型：在 `references/doc-import.md` 的转换表加一行。
 - 换设备：同步 KB_ROOT（含 paths.yaml）→ 改 paths.yaml 指向新设备路径 →
   缺失项目**先询问用户是否克隆**；同意才按 git_remote 克隆，拒绝或 `none` 则标记缺失。

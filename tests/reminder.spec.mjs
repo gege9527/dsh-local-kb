@@ -1,4 +1,4 @@
-import { COMPACTION_REMINDER_TEXT, createCompactionReminder } from '../index.js'
+import { COMPACTION_REMINDER_TEXT, createCompactionReminder, buildCheckReminder } from '../index.js'
 
 // ---- 长对话提醒：过比例提醒一次，拿不到信号就不出声 ----
 
@@ -51,6 +51,20 @@ check('自定义阈值 0.9', remind(ctx(session)) === '')
 // 非法阈值退回默认
 remind = createCompactionReminder(pressureWith(61, 100), 7)
 check('非法阈值退回 0.6', remind(ctx(session)) === COMPACTION_REMINDER_TEXT)
+
+// ---- 体检告警回传：只提示一次，文案带修法 ----
+const okCheck = { status: 'ok', warns: [] }
+check('体检 ok 不提示', buildCheckReminder(okCheck, null) === null)
+const warnCheck = { status: 'warn', warns: ['记忆含未标注的时效性内容: a.md:10（加截至标注）'] }
+const built = buildCheckReminder(warnCheck, null)
+check('体检 warn 提示', !!built && built.text.includes('知识库体检有警告'))
+check('提示带第一条告警原文', !!built && built.text.includes('a.md:10'))
+check('提示带修法', !!built && built.text.includes('kb-check'))
+check('同一签名不重复提示', buildCheckReminder(warnCheck, built.sig) === null)
+check('换新告警重新提示', !!buildCheckReminder({ status: 'warn', warns: ['别的警告'] }, built.sig))
+check('体检 failed 也提示', !!buildCheckReminder({ status: 'failed', warns: ['记忆无 frontmatter: x.md'] }, null))
+check('warns 为空不提示', buildCheckReminder({ status: 'warn', warns: [] }, null) === null)
+check('warns 非字符串不炸', buildCheckReminder({ status: 'warn', warns: [null, '  ', 'ok的警告'] }, null).text.includes('ok的警告'))
 
 const failed = results.filter((r) => !r).length
 console.log(`\n---- ${results.length - failed} passed, ${failed} failed ----`)

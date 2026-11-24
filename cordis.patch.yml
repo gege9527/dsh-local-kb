@@ -23,4 +23,3 @@
         bundledSkillDir: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('node_modules/dsh-local-kb/skills/', baseUrl))"
     - id: local-kb
       name: dsh-local-kb
-      config: {}

@@ -25,6 +25,16 @@ const defaults = loadPluginSettings(home)
 check('默认远端目录', defaults.remoteDir === 'local-kb-sync', JSON.stringify(defaults))
 check('默认关自动同步', defaults.autoSync === false)
 check('默认服务商', defaults.provider === 'custom')
+check('默认父目录为空（回落主目录）', defaults.parent === null, JSON.stringify(defaults))
+
+// parent：只接受绝对路径；库名固定 .local-kb，不解析自定义库名
+check('父目录接受绝对路径', savePluginSettings(home, { parent: '/data' }).parent === '/data')
+check('非法父目录保留旧值', loadPluginSettings(home).parent === '/data', JSON.stringify(loadPluginSettings(home)))
+const relHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-settings-rel-'))
+savePluginSettings(relHome, { parent: 'data/kb' })
+check('相对路径不落盘', loadPluginSettings(relHome).parent === null, JSON.stringify(loadPluginSettings(relHome)))
+savePluginSettings(home, { parent: null })
+check('parent:null 清回默认', loadPluginSettings(home).parent === null)
 
 // 旧文件没有 autoSync 字段：按默认关闭处理，不要偷偷打开
 const legacyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-settings-legacy-'))

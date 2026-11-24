@@ -156,7 +156,7 @@ How to apply: <下次怎么用>
 ```md
 # 知识库（local-kb）
 
-给 AI 用的纯文件知识库。根 `<KB_ROOT>/`（默认 `~/.local-kb/`，`KB_ROOT` 环境变量可覆盖；Windows 隐藏：`attrib +h`）。
+给 AI 用的纯文件知识库。根 `<KB_ROOT>/`（默认 `~/.local-kb/`，换位置走 DSH 设置页，库名固定 `.local-kb`；Windows 隐藏：`attrib +h`）。
 
 ## 结构
 

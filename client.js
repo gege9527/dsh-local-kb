@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
     var API_DOWNLOAD = 'api/local-kb/download'
     var API_SETTINGS = 'api/local-kb/settings'
     var API_CLEAR = 'api/local-kb/clear'
+    var API_RELOCATE = 'api/local-kb/relocate'
+    var API_RELOCATE_CHECK = 'api/local-kb/relocate/precheck'
 
     var CRED_URL = 'dsh_local_kb_webdav_url'
     var CRED_USER = 'dsh_local_kb_webdav_user'
@@ -58,6 +60,26 @@ window.__ModuleLoader__.load({
         ? '知识库位置、WebDAV 备份与同步设置。默认不会自动上传，需要你点「上传到云端」。'
         : 'Knowledge base location, WebDAV backup and sync. Nothing uploads automatically by default — use Upload.',
       kbLocation: isZh() ? '知识库位置' : 'Knowledge base location',
+      relocate: isZh() ? '更改位置…' : 'Change location…',
+      relocateHint: isZh()
+        ? '选择一个父目录，知识库会复制到 <父目录>/.local-kb（目录名固定）。旧库不删除，改名保留。'
+        : 'Pick a parent folder; the KB is copied to <parent>/.local-kb (fixed name). The old folder is renamed, never deleted.',
+      parentDir: isZh() ? '父目录（绝对路径）' : 'Parent folder (absolute path)',
+      checkPlan: isZh() ? '检查' : 'Check',
+      startMove: isZh() ? '开始迁移' : 'Start',
+      cancel: isZh() ? '取消' : 'Cancel',
+      confirmRelocate: isZh()
+        ? '将把整库复制到新位置并切换。旧库会改名为 .local-kb-old-<时间> 保留，确认无误后请自行删除。继续？'
+        : 'The whole KB will be copied and switched. The old folder will be renamed .local-kb-old-<time> and kept — delete it yourself once verified. Continue?',
+      relocateOk: isZh() ? '已切换位置' : 'Location changed',
+      relocateOkOld: isZh() ? '，旧库保留在 ' : ', old folder kept at ',
+      relocateFailed: isZh() ? '迁移失败' : 'Move failed',
+      planPrefix: isZh() ? '将创建：' : 'Will create: ',
+      moving: isZh() ? '迁移中：' : 'Moving: ',
+      phaseCopying: isZh() ? '复制文件' : 'copying files',
+      phaseVerifying: isZh() ? '校验文件' : 'verifying',
+      phaseSwitching: isZh() ? '切换设置' : 'switching settings',
+      phaseRenaming: isZh() ? '旧库改名' : 'renaming old folder',
       openFolder: isZh() ? '打开文件夹' : 'Open Folder',
       opened: isZh() ? '已打开' : 'Opened',
       openFailed: isZh() ? '打开失败' : 'Open failed',
@@ -227,6 +249,61 @@ window.__ModuleLoader__.load({
       var [overview, setOverview] = useState(null)
       var [remoteDir, setRemoteDir] = useState('local-kb-sync')
       var [autoSync, setAutoSync] = useState(false)
+      // 改位置：父目录输入、预检结果、阶段进度
+      var [relocating, setRelocating] = useState(false)
+      var [relocateParent, setRelocateParent] = useState('')
+      var [relocatePlan, setRelocatePlan] = useState(null)
+      var [relocateBusy, setRelocateBusy] = useState('')
+      var [relocateError, setRelocateError] = useState('')
+      var [relocatePhase, setRelocatePhase] = useState(null)
+
+      function fmtBytes(n) {
+        if (!n || n < 1024) return (n || 0) + ' B'
+        var kb = n / 1024
+        if (kb < 1024) return kb.toFixed(1) + ' KB'
+        return (kb / 1024).toFixed(1) + ' MB'
+      }
+      var PHASE_TEXT = {
+        copying: T.phaseCopying,
+        verifying: T.phaseVerifying,
+        switching: T.phaseSwitching,
+        renaming: T.phaseRenaming,
+      }
+
+      function checkRelocate() {
+        var parent = relocateParent.trim()
+        if (!parent) { setRelocateError(T.parentDir); return }
+        setRelocateBusy('check')
+        setRelocateError('')
+        postJson(API_RELOCATE_CHECK, { parent: parent }).then(function (r) {
+          setRelocatePlan(r || null)
+          if (!r || !r.ok) setRelocateError(((r && r.blockers) || []).join('；') || T.relocateFailed)
+        }).catch(function (e) {
+          setRelocateError(e && e.message ? e.message : String(e))
+        }).finally(function () { setRelocateBusy('') })
+      }
+
+      function startRelocate() {
+        var parent = relocateParent.trim()
+        if (!parent || !relocatePlan || !relocatePlan.ok) return
+        if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(T.confirmRelocate)) return
+        setRelocateBusy('move')
+        setRelocateError('')
+        postJson(API_RELOCATE, { parent: parent }).then(function (r) {
+          if (r && r.ok) {
+            showNotice('ok', T.relocateOk + (r.legacyDir ? T.relocateOkOld + r.legacyDir : ''))
+            setRelocating(false)
+            setRelocateParent('')
+            setRelocatePlan(null)
+            setRelocatePhase(null)
+            return refreshState()
+          }
+          var blockers = (r && r.blockers) || []
+          setRelocateError(blockers.join('；') || (r && (r.reason || r.code)) || T.relocateFailed)
+        }).catch(function (e) {
+          setRelocateError(e && e.message ? e.message : String(e))
+        }).finally(function () { setRelocateBusy('') })
+      }
 
       function refreshState() {
         return getJson(API_STATE).then(function (data) {
@@ -252,6 +329,17 @@ window.__ModuleLoader__.load({
           if (u && u.configured) setUrlConfigured(true)
         })
       }
+
+      // 迁移中轮询阶段：后端把 phase 写进同步状态，这里只读。
+      useEffect(function () {
+        if (relocateBusy !== 'move') return
+        var timer = setInterval(function () {
+          getJson(API_STATE).then(function (d) {
+            if (d && d.state && d.state.relocatePhase) setRelocatePhase(d.state.relocatePhase)
+          }).catch(function () { /* 轮询失败忽略，不打扰迁移 */ })
+        }, 800)
+        return function () { clearInterval(timer) }
+      }, [relocateBusy])
 
       useEffect(function () {
         // 状态持久化在 host 的 .kb-sync-state.json：打开设置页拉一次即最新，
@@ -527,14 +615,73 @@ window.__ModuleLoader__.load({
             h('p', { className: 'dsh-lkb-desc' }, T.aboutAutoClean),
             h('p', { className: 'dsh-lkb-desc' }, T.aboutManualClean)),
 
-          // 位置 + 打开（split 按钮，复刻官方 open-in-app 控件：主按钮=默认应用，chevron=菜单）
-          h('div', { className: 'dsh-lkb-card dsh-lkb-split' },
+          // 位置卡：当前路径 + 打开；下面是「更改位置」的展开区
+          h('div', { className: 'dsh-lkb-card' },
             h('div', { className: 'dsh-lkb-label' }, T.kbLocation),
-                          h('div', { className: 'dsh-lkb-pathrow' },
-                h('span', { className: 'dsh-lkb-path' }, info ? info.kbRoot : (T.loading)),
-                h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-outline', onClick: openKbRoot, disabled: !info }, T.openFolder)
-              ),
-              !info || info.installed ? null : h('p', { className: 'dsh-lkb-desc' }, T.notInstalled)),
+            h('div', { className: 'dsh-lkb-pathrow' },
+              h('span', { className: 'dsh-lkb-path' }, info ? info.kbRoot : (T.loading)),
+              h('button', { type: 'button', className: 'dsh-lkb-btn dsh-lkb-btn-outline', onClick: openKbRoot, disabled: !info }, T.openFolder)
+            ),
+            !info || info.installed ? null : h('p', { className: 'dsh-lkb-desc' }, T.notInstalled),
+
+            relocating ? null : h('div', { className: 'dsh-lkb-row' },
+              h('button', {
+                type: 'button',
+                className: 'dsh-lkb-btn dsh-lkb-btn-outline',
+                onClick: function () {
+                  setRelocating(true)
+                  setRelocatePlan(null)
+                  setRelocateError('')
+                },
+              }, T.relocate)),
+
+            relocating ? h('div', null,
+              h('p', { className: 'dsh-lkb-desc' }, T.relocateHint),
+              h('div', { className: 'dsh-lkb-field' },
+                h('label', { className: 'dsh-lkb-label' }, T.parentDir),
+                h('input', {
+                  type: 'text',
+                  className: 'dsh-lkb-input',
+                  value: relocateParent,
+                  placeholder: '/data',
+                  spellCheck: false,
+                  onChange: function (e) { setRelocateParent(e.target.value); setRelocatePlan(null); setRelocateError('') },
+                  disabled: relocateBusy === 'move',
+                })),
+              relocatePlan ? h('p', { className: relocatePlan.ok ? 'dsh-lkb-desc' : 'dsh-lkb-status-fail' },
+                relocatePlan.ok
+                  ? T.planPrefix + relocatePlan.target + ' · ' + relocatePlan.plan.files +
+                    (isZh() ? ' 个文件 / ' : ' files / ') + fmtBytes(relocatePlan.plan.bytes)
+                  : (relocatePlan.blockers || []).join('；')) : null,
+              relocateError ? h('p', { className: 'dsh-lkb-status-fail' }, relocateError) : null,
+              relocateBusy === 'move'
+                ? h('p', { className: 'dsh-lkb-desc' }, T.moving + (PHASE_TEXT[relocatePhase] || '…'))
+                : null,
+              h('div', { className: 'dsh-lkb-row' },
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-lkb-btn dsh-lkb-btn-ghost',
+                  onClick: checkRelocate,
+                  disabled: relocateBusy !== '' || !relocateParent.trim(),
+                }, relocateBusy === 'check' ? '…' : T.checkPlan),
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-lkb-btn dsh-lkb-btn-primary',
+                  onClick: startRelocate,
+                  disabled: relocateBusy !== '' || !relocatePlan || !relocatePlan.ok,
+                }, relocateBusy === 'move' ? '…' : T.startMove),
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-lkb-btn dsh-lkb-btn-ghost',
+                  onClick: function () {
+                    setRelocating(false)
+                    setRelocatePlan(null)
+                    setRelocateError('')
+                  },
+                  disabled: relocateBusy === 'move',
+                }, T.cancel)
+              )
+            ) : null),
 
           // WebDAV 配置
           h('div', { className: 'dsh-lkb-card' },

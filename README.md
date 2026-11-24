@@ -286,43 +286,41 @@ python3 skills/local-kb/tools/kb-archive-note.py ~/.local-kb --path projects/<id
 
 ## 配置
 
-写进 profile 的 `cordis.patch.yml`：
-
-| 字段 | 默认 | 含义 |
-|---|---|---|
-| `kbRoot` | `~/.local-kb` | 知识库根（也认 `KB_ROOT` 环境变量） |
-| `injectContext` | `true` | 是否每轮注入记忆索引与知识地图 |
-| `injectMaxLines` | `120` | 单个索引最多注入多少行 |
-| `injectMaxBytes` | `12288` | 单个索引最多注入多少字节 |
-| `injectDescriptions` | `true` | 记忆索引是否带「— 钩子」；钩子由协议限定 ≤24 字 |
-| `indexCap` | `true` | 是否启用记忆索引硬上限 |
-| `compactionReminder` | `true` | 长对话是否提醒写记忆 |
-| `reminderPressure` | `0.6` | 上下文占用多少比例时提醒（0 < x ≤ 1） |
-| `injectRules` | `true` | 是否每轮注入常驻规则 |
-| `migrateLegacy` | `true` | 是否清理旧版本安装残留 |
-
-WebDAV 的地址、账户、密码、远程目录、自动同步不走这里，由设置页管理。
+**插件没有可配置项**。注入、索引上限、长对话提醒、旧安装迁移都是内部固定策略，写死在代码里，
+不接受 `cordis.patch.yml` 覆盖。设置页只管两件事：知识库位置、WebDAV 同步。
 
 ### 知识库位置
 
-默认 `~/.local-kb`。优先级：**`cordis.patch.yml` 的 `kbRoot` > `KB_ROOT` 环境变量 > 默认**。
+默认 `~/.local-kb`。位置只能通过**设置页 → 知识库位置**修改，改的是「父目录」，库根固定为
+`<父目录>/.local-kb` —— 目录名不可换（工具链契约）。
 
-长期固定用配置：
+操作：设置页 →「知识库位置」→「更改位置…」→ 填父目录 →「检查」→ 确认无误点「开始迁移」。
 
-```yaml
-# cordis.patch.yml
-config:
-  kbRoot: /data/kb
+预检会拒绝这些情况（不做任何改动）：
+
+- 父目录不存在、不是目录、不可写
+- **目标已有同名文件夹 `.local-kb`**
+- 目标与当前库重叠（或就是当前位置）
+- 当前库缺少 `paths.yaml`
+
+迁移分四步（设置页会显示当前阶段）：
+
+```
+复制  →  <新父目录>/.local-kb.incoming-<时间>/
+校验  →  文件数、大小、关键文件摘要
+切换  →  写 settings.json，立即生效
+收尾  →  旧目录改名 <旧父目录>/.local-kb-old-<YYYYMMDDHHmmss>
 ```
 
-临时试或容器里用环境变量：
+旧库内容不删（删除只由用户做），改名为 `.local-kb-old-<YYYYMMDDHHmmss>` 保留，
+确认无误后自行清理。
+
+插件与脚本读的是同一个来源：`$DSH_HOME/local-kb/settings.json` 的 `parent`。手动跑脚本时
+也可以直接给路径参数：
 
 ```sh
-KB_ROOT=/data/kb dsh web
+python3 skills/local-kb/tools/kb-search.py "关键词" /data/.local-kb
 ```
-
-**两者建议保持一致**：插件读配置或环境变量；脚本（`kb-check.py` 等）默认只读 `KB_ROOT`。
-只写配置不设环境变量时，手动跑脚本要显式传路径，否则会去查 `~/.local-kb`。
 
 ### 命名不可改
 
@@ -335,8 +333,9 @@ KB_ROOT=/data/kb dsh web
 
 | 变量 | 作用 |
 |---|---|
-| `KB_ROOT` | 覆盖知识库位置 |
-| `DSH_LOCAL_KB_ENFORCE=0` | 关闭搜索拦截与跑偏提醒 |
+| `DSH_LOCAL_KB_ENFORCE=0` | 关闭搜索拦截与跑偏提醒（默认开启） |
+
+`DSH_HOME` 是 DSH 平台自身的变量（默认 `~/.dsh`），插件跟着它存放设置与同步状态，不是本插件的配置项。
 
 ---
 
@@ -529,10 +528,11 @@ node install-skill.js --uninstall
 
 ## 版本与兼容
 
-当前版本 `0.6.5`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本 `0.6.6`。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 版本 | 主题 |
 |---|---|
+| 0.6.6 | 位置统一到设置页父目录、删插件配置项与 `KB_ROOT`、同步状态去哈希、体检告警闭环 |
 | 0.6.5 | 记忆 `name` 必须等于文件名、写前读协议、校验报错给修复值、维护铁律改准 |
 | 0.6.4 | 写入前置收成一句「未入库先入库」，堵住全局 docs 旁路 |
 | 0.6.3 | 脚本默认根读 KB_ROOT、Windows 路径兼容、位置与命名文档、平台支持矩阵 |

@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-kb",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "知识库 + 长期记忆插件：每轮注入记忆索引与知识地图、索引硬上限、禁止 AI 删除、镜像同步到 WebDAV",
   "keywords": [
     "dsh-plugin",
@@ -73,7 +73,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "test": "node tests/skill-content.spec.mjs && node tests/tools.spec.mjs && node tests/add-project.spec.mjs && node tests/archive-project.spec.mjs && node tests/archive-note.spec.mjs && node tests/privacy.spec.mjs && node tests/card-quality.spec.mjs && node tests/kb-check.spec.mjs && node tests/kb-move.spec.mjs && node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/code-write.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/mirror.spec.mjs && node tests/reminder.spec.mjs && node tests/settings.spec.mjs && node tests/uninstall.spec.mjs && node tests/migrate.spec.mjs && node tests/hit-rate.spec.mjs && node scripts/check-package.mjs",
+    "test": "node tests/skill-content.spec.mjs && node tests/tools.spec.mjs && node tests/add-project.spec.mjs && node tests/archive-project.spec.mjs && node tests/archive-note.spec.mjs && node tests/privacy.spec.mjs && node tests/card-quality.spec.mjs && node tests/kb-check.spec.mjs && node tests/kb-move.spec.mjs && node tests/gate.spec.mjs && node tests/api.spec.mjs && node tests/path.spec.mjs && node tests/bash.spec.mjs && node tests/code-write.spec.mjs && node tests/index-cap.spec.mjs && node tests/delete-guard.spec.mjs && node tests/inject.spec.mjs && node tests/mirror.spec.mjs && node tests/reminder.spec.mjs && node tests/settings.spec.mjs && node tests/uninstall.spec.mjs && node tests/relocate.spec.mjs && node tests/relocate-e2e.spec.mjs && node tests/migrate.spec.mjs && node tests/hit-rate.spec.mjs && node scripts/check-package.mjs",
     "test:skill": "node tests/skill-content.spec.mjs",
     "test:tools": "node tests/tools.spec.mjs",
     "test:kb-check": "node tests/kb-check.spec.mjs",
@@ -94,6 +94,7 @@
     "test:hit-real": "node tests/hit-rate-real.mjs",
     "test:add": "node tests/add-project.spec.mjs",
     "test:archive": "node tests/archive-project.spec.mjs && node tests/archive-note.spec.mjs",
+    "test:relocate": "node tests/relocate.spec.mjs && node tests/relocate-e2e.spec.mjs",
     "test:migrate": "node tests/migrate.spec.mjs",
     "check:package": "node scripts/check-package.mjs",
     "prepublishOnly": "node scripts/check-package.mjs && node scripts/check-privacy.mjs",
