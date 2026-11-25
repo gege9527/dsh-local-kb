@@ -1592,23 +1592,17 @@ function runKbCheckProcess(python, script, kbRoot, extraArgs = []) {
     // ---- 任务内提醒（post-execute 附加上下文；不 deny、不重写结果、零打断）----
     // 检索提示：kb-search 带置信分级（弱结果会告警），比裸 grep 可靠；
     // 脚本缺失时回落成"限定项目目录 + 排除 archive"的 grep，不再教整库 grep。
-    const kbSearchScript = (() => {
-      // 只有包内这一条路径：旧安装副本（$DSH_HOME/skills/local-kb）已由 migrate.js 清理，
-      // 再回落到它只会掩盖安装问题。
-      const candidates = []
+    // 只判断包内脚本在不在：提示文案不拼本机路径 —— 路径由技能自己用相对路径声明，
+    // harness 加载技能时给 base directory（见 dsh 的 <skill_resources>）。
+    const kbSearchAvailable = (() => {
       try {
-        candidates.push(fileURLToPath(new URL('./skills/local-kb/tools/kb-search.py', import.meta.url)))
-      } catch {}
-      for (const c of candidates) {
-        try {
-          if (statSync(c).isFile()) return c
-        } catch {}
+        return statSync(fileURLToPath(new URL('./skills/local-kb/tools/kb-search.py', import.meta.url))).isFile()
+      } catch {
+        return false
       }
-      return null
     })()
-    // 惰性求值：位置改了提示里的路径要跟着变。
-    const kbGrep = () => (kbSearchScript
-      ? 'python3 ' + kbSearchScript + ' "关键词"（先看它的置信提示）'
+    const kbGrep = () => (kbSearchAvailable
+      ? '用技能 local-kb 的 tools/kb-search.py "关键词"（先看它的置信提示）'
       : 'grep -rn "关键词" ' + currentRoot() + '/projects/<id>/ ' + currentRoot() + '/docs/ --exclude-dir=archive')
     const reminderTexts = {
       // 知识库没有覆盖项目/文档的总索引（只有记忆有 MEMORY.md），
@@ -2114,7 +2108,7 @@ export const COMPACTION_REMINDER_TEXT =
   '1. 写或更新一条 \`status: active\` 的 \`project\` 记忆：目标 / 当前状态 / 阻塞 / 下一步（相对时间转绝对日期）。\n' +
   '   已有 active 就地更新，不要新建第二条。\n' +
   '2. 在所属 MEMORY.md 的指针行前加 \`⚡\`。\n' +
-  '3. 跑 \`python3 <技能目录>/tools/kb-check.py\`。\n' +
+  '3. 跑技能里的 \`tools/kb-check.py\`（路径相对技能目录）。\n' +
   '任务已经做完、或本来就只是一问一答：跳过，不用写。\n' +
   '⚡ 只是恢复锚点，不是「只看这一条」：其余记忆照常按钩子取舍。'
 
@@ -2168,7 +2162,7 @@ export function buildCheckReminder(lastCheck = {}, seenSig) {
   return {
     text: head + '（最近一次 kb-check，来自你写过或改过的知识库）：\n' + lines + '\n' +
       '按提示修：补 frontmatter / 把索引钩子改到 ≤24 字 / 给进度段加 `> 截至 YYYY-MM-DD：…`；' +
-      '改完跑 `python3 <技能目录>/tools/kb-check.py` 确认。与本任务无关可忽略本提示。',
+      '改完跑技能里的 `tools/kb-check.py` 确认。与本任务无关可忽略本提示。',
     sig,
   }
 }

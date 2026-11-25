@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-kb",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "知识库 + 长期记忆插件：每轮注入记忆索引与知识地图、索引硬上限、禁止 AI 删除、镜像同步到 WebDAV",
   "keywords": [
     "dsh-plugin",

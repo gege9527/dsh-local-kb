@@ -89,14 +89,19 @@ description: >-
 
 代码模式 → 加载 `references/code-project.md`；文档模式 → `references/doc-import.md`。
 
+## 路径约定
+
+技能里的路径都**相对本 SKILL.md 所在目录**：脚本在 `tools/`，参考资料在 `references/`。
+harness 加载技能时一并给出这个目录的绝对路径，按它解析即可；不要把绝对路径写回技能文件。
+
 ## 检索方式
 
 全部走文件系统，零工具依赖：
 
 | 用途 | 做法 |
 |---|---|
-| 知识库内部检索（中文别名、文档、记忆） | 优先 `python3 <技能目录>/tools/kb-search.py "<关键词>"`（自带置信分级）；要裸 grep 时**限定 `projects/` 与 `docs/` + 排除 `archive/`**，别扫 `<KB_ROOT>` 整库 |
-| 大库检索（文档多、正文长） | `python3 <技能目录>/tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文。frontmatter 的 `description` 给中间权重，`aliases` 整串出现在查询里直接置顶 |
+| 知识库内部检索（中文别名、文档、记忆） | 优先 `python3 tools/kb-search.py "<关键词>"`（自带置信分级）；要裸 grep 时**限定 `projects/` 与 `docs/` + 排除 `archive/`**，别扫 `<KB_ROOT>` 整库 |
+| 大库检索（文档多、正文长） | `python3 tools/kb-search.py "<关键词>"`——卡片定位篇，再按行号读原文。frontmatter 的 `description` 给中间权重，`aliases` 整串出现在查询里直接置顶 |
 
 **读检索结果先看置信**：
 - `⚠ 低置信：主词 0/2 · 辅助词 1/5` → 结果多半是字面巧合，**别直接当答案**，换关键词或看「相关记忆」段。
@@ -105,7 +110,7 @@ description: >-
 - 加 `--explain` 看每篇的证据类型（`alias_hit` / `exact_title` / `desc_match` / `keyword`）与分数。
 | 代码定位（"X 功能在哪 / 怎么实现"） | 先 grep KB → 再 grep 源码 → 读文件确认行号 |
 | 元数据提取（语言分布、关键文件） | 读 README / package.json + 列目录 + `git ls-files` |
-| **知识库自检** | `python3 <技能目录>/tools/kb-check.py [KB_ROOT]`；带 `--fix` 预览补索引，加 `--write` 落盘 |
+| **知识库自检** | `python3 tools/kb-check.py [KB_ROOT]`；带 `--fix` 预览补索引，加 `--write` 落盘 |
 | **项目移动 / 改名** | 先 `kb-move-project.py <KB_ROOT> --from-path 旧 --to-path 新 --plan /tmp/p.json`，再 `--apply --plan /tmp/p.json`（自动备份 + 改 id/目录/引用） |
 
 **引用文档时不联网**：本地是基线。回答里带「快照 <date_added>（<N> 天前）」；超过 90 天只说
@@ -129,8 +134,8 @@ grep -rn "<关键词>" <KB_ROOT>/projects/<id>/ <KB_ROOT>/memory/ <KB_ROOT>/docs
 检索会自己重建一次；`--rebuild` 只在想强制重建时用：
 
 ```bash
-python3 <技能目录>/tools/kb-card.py <KB_ROOT>       # 生成卡片
-python3 <技能目录>/tools/kb-search.py "<关键词>" --rebuild   # 建索引并检索
+python3 tools/kb-card.py <KB_ROOT>       # 生成卡片
+python3 tools/kb-search.py "<关键词>" --rebuild   # 建索引并检索
 ```
 
 ## 动作清单
@@ -175,7 +180,7 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
 
 1. 有 active → 就地更新（目标 / 当前状态 / 阻塞 / 下一步），不新建第二条；
 2. 无 active → 新建一条 `type: project` + `status: active`，索引行加 `⚡`，走接管协议；
-3. 跑 `python3 <技能目录>/tools/kb-check.py`；
+3. 跑 `python3 tools/kb-check.py`；
 4. **再继续任务**。
 
 **落盘优先于继续**：被压缩或超限后丢的是对话，不是笔记。反过来说，落盘晚了就等于没落。
@@ -197,7 +202,7 @@ type 限 user/feedback/project/reference，project 按触发条件带 status: ac
     物理删除由用户手动执行。流程见 `references/actions.md`。
 12. **写入后必跑校验**：
     ```bash
-    python3 <技能目录>/tools/kb-check.py [KB_ROOT]
+    python3 tools/kb-check.py [KB_ROOT]
     ```
     退出码非 0（有错误）→ 报告并修正，**不得声称写入成功**。
     漏了索引指针时用 `--fix` 补：默认只预览要追加什么，`--fix --write` 才落盘。

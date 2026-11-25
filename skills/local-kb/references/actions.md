@@ -45,7 +45,7 @@
 1. **项目**：整目录归档，一条命令
 
    ```bash
-   python3 <技能目录>/tools/kb-archive-project.py <KB_ROOT> --id <id> --apply
+   python3 tools/kb-archive-project.py <KB_ROOT> --id <id> --apply
    ```
 
    它做：`projects/<id>/` 移入 `archive/projects/<id>/`、删 `paths.yaml` 条目、全库改写
@@ -53,7 +53,7 @@
 2. **单条记忆**：一条命令
 
    ```bash
-   python3 <技能目录>/tools/kb-archive-note.py <KB_ROOT> --path <笔记路径> --apply
+   python3 tools/kb-archive-note.py <KB_ROOT> --path <笔记路径> --apply
    ```
 
    它做：移入 `archive/memory/<slug>.md`（项目记忆 → `archive/projects/<id>/memory/<slug>.md`）、

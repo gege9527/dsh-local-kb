@@ -173,7 +173,7 @@ How to apply: <下次怎么用>
 
 ## 检索（按顺序）
 
-1. 项目 / 文档：`python3 <技能目录>/tools/kb-search.py "关键词"`，按置信分级取用，weak 别当答案。
+1. 项目 / 文档：`python3 tools/kb-search.py "关键词"`，按置信分级取用，weak 别当答案。
    裸 grep 限定 `projects/` 与 `docs/`，排除 `archive/`。
 2. 代码位置：项目页「中文概念 → 位置」→ `paths.yaml` 取路径 → grep 源码 → 读文件确认行号。
 3. 记忆：先读对应 `MEMORY.md` 索引，只开钩子相关的笔记，别批量读正文。

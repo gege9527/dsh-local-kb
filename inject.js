@@ -13,7 +13,6 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 /** 同一份文件在这个窗口内不重复 stat（dsh 每步都会问一次）。 */
@@ -38,20 +37,13 @@ const MAP_MAX_DOCS = 8
  * kb-search 会带置信分级，弱结果直接告警，裸 grep 没有这层判断。
  * 脚本缺失（裁剪安装）时返回 null，注入回落成纯 grep 提示。
  */
-export function kbSearchPath() {
-  const candidates = []
-  // 技能现在随包加载（bundledSkillDir），脚本就在包内，路径短且不依赖安装副本。
+export function kbSearchPath(moduleUrl = import.meta.url) {
+  // 只认包内这一份（技能随包加载）。旧安装留下的同名脚本可能停在旧版本，
+  // 回落到它只会跑出过期结果 —— 宁可返回 null，让注入回落成纯 grep 提示。
   try {
-    candidates.push(fileURLToPath(new URL('./skills/local-kb/tools/kb-search.py', import.meta.url)))
+    const p = join(skillDir(moduleUrl), 'tools', 'kb-search.py')
+    if (statSync(p).isFile()) return p
   } catch {}
-  // 兜底：0.3.x 及更早版本留下的技能副本（迁移没跑到时仍能用）。
-  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
-  candidates.push(join(dshHome, 'skills', 'local-kb', 'tools', 'kb-search.py'))
-  for (const p of candidates) {
-    try {
-      if (statSync(p).isFile()) return p
-    } catch {}
-  }
   return null
 }
 
@@ -89,20 +81,16 @@ export function stripRuleMarkers(text) {
  * 每轮注入的常驻规则正文（替代旧方案写进 AGENTS.md 的 KB_LOCAL 块）。
  * 读不到就返回空串：规则缺失不能拖垮请求。
  */
-export function rulesText(cache = RULES_CACHE) {
-  const file = rulesPath()
+export function rulesText(cache = RULES_CACHE, moduleUrl = import.meta.url) {
+  const file = rulesPath(moduleUrl)
   const cached = readCached(file, cache)
   if (cached === undefined) return ''
   const body = stripRuleMarkers(cached.text)
+  // 注入正文只放与机器无关的内容：技能里的路径一律相对技能目录，由 harness 加载技能时
+  // 补 base directory；绝不把本机绝对路径写进提示词 —— 换机器 / 换安装位置就成了错的答案。
   return body.length <= RULES_MAX_CHARS ? body : body.slice(0, RULES_MAX_CHARS) + '\n…（规则过长已截断）'
 }
 
-
-/** home 前缀换成 ~，注入行短一截。 */
-function tildify(p) {
-  const home = homedir()
-  return p.startsWith(home + sep) ? '~' + p.slice(home.length) : p
-}
 
 /**
  * 解析 paths.yaml —— 只认本插件自己写的那两种缩进（id: / path: / git_remote:），
@@ -632,9 +620,9 @@ export function knowledgeMapText({ kbRoot, cwd, cache = new Map() }) {
     if (docs.files.length > 0) parts.push('单篇：' + docs.files.join('、'))
     lines.push('文档 docs/：' + parts.join('；'))
   }
-  const searchPy = kbSearchPath()
-  if (searchPy) {
-    lines.push(`检索：python3 ${tildify(searchPy)} "关键词"（带置信分级，弱结果会告警，别当答案）`)
+  // 不写本机路径：占位符由技能自己声明，换机器 / 换安装位置都成立。
+  if (kbSearchPath() !== null) {
+    lines.push('检索：用技能 local-kb 的 tools/kb-search.py "关键词"（带置信分级，弱结果会告警，别当答案）')
   }
   return lines.join('\n')
 }

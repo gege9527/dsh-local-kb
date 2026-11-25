@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.7 — 2026-11-25
+
+### 技能路径按 DSH 标准
+
+症状：同一份 KB 在两处跑出相反结论 —— 插件随包的 `kb-check.py` 报「钩子超长 3 行」，
+另一份手工拷贝的旧版技能（没有这项检查）报 0 警告，模型据此以为「修好了」。
+
+- **`kbSearchPath()` 只认包内**：删掉 `$DSH_HOME/skills/local-kb` 回落；包内脚本缺失时返回 null，
+  注入回落成纯 grep 提示。
+- **技能内一律相对路径**：`SKILL.md` 与 `references/*.md` 的 `tools/kb-*.py` 不再带前缀。
+  DSH 加载技能时在 `<skill_resources>` 里给出 `Base directory for this skill`，并说明技能提到的
+  相对路径按它解析（`packages/skill/skill/src/index.ts` 的 `renderResourceHint`）。
+  删掉自造的 `<技能目录>` / `<SKILL_DIR>` 占位符 —— 标准里没有这种变量。
+- **注入里不拼任何路径**：知识地图与体检 / 压缩提醒改成「用技能 local-kb 的 `tools/kb-search.py`」，
+  既不写本机绝对路径（换机器即错），也不写需要人工替换的占位符。
+- **测试**：`inject.spec` 反断言规则与地图不含 `/Users/`、`/home/`、`python3 /`。
+
 ## 0.6.6 — 2026-11-24
 
 ### 位置与配置收敛

@@ -108,8 +108,8 @@ active 正文末行带**持有者声明**，就地更新时改写：
 **漏指针用 `--fix` 补，别手抖补错段**：
 
 ```bash
-python3 <技能目录>/tools/kb-check.py [KB_ROOT] --fix           # 只预览要追加什么
-python3 <技能目录>/tools/kb-check.py [KB_ROOT] --fix --write   # 落盘
+python3 tools/kb-check.py [KB_ROOT] --fix           # 只预览要追加什么
+python3 tools/kb-check.py [KB_ROOT] --fix --write   # 落盘
 ```
 
 它只做「把有笔记没索引的条目追加进对应小节」，**已有行一字不动**。落点规则：
@@ -177,7 +177,7 @@ kb-check 会双向检查（段内错了报「实际 status」，该在而没在�
 4. 确认失败/无响应 → 不写 active，只允许写 `completed`/`archived` 历史笔记，
    保住现有 active 不被污染。
 5. 每次使用前重新检查召回的指针与代码/git/实际环境。
-6. **写后必跑校验**：`python3 <技能目录>/tools/kb-check.py`；退出码非 0 →
+6. **写后必跑校验**：`python3 tools/kb-check.py`；退出码非 0 →
    报告错误并修正，**不得声称写入成功**。
 
 ## 任务结束检查点（每个 task 结束时必过）

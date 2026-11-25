@@ -10,7 +10,7 @@
 - **首选一条命令建档**（推荐，别手写 id）：
 
   ```bash
-  python3 <技能目录>/tools/kb-add-project.py <KB_ROOT> --path <path> \
+  python3 tools/kb-add-project.py <KB_ROOT> --path <path> \
     --title <项目名> --description "<一句话>" --alias <中文别名>
   ```
 
@@ -32,8 +32,8 @@
 项目换位置或目录改名后，id 必须按新位置重算，并且一次性同步知识库里的一切：
 
 ```bash
-python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --from-path <旧路径> --to-path <新路径> --plan /tmp/kb-move.json
-python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb-move.json
+python3 tools/kb-move-project.py <KB_ROOT> --from-path <旧路径> --to-path <新路径> --plan /tmp/kb-move.json
+python3 tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb-move.json
 ```
 
 `--apply` 默认只改路径引用与结构字段；若正文里还有裸 id（短 id 会误伤普通用词与源码路径），
@@ -119,7 +119,7 @@ python3 <技能目录>/tools/kb-move-project.py <KB_ROOT> --apply --plan /tmp/kb
 1. `paths.yaml` 含该 `project_id`，指向路径存在。
 2. 读回笔记，概念→位置表里每个相对路径在 `<path>` 下真实存在。
 3. 笔记内普通链接指向的文件存在。
-4. 跑 `python3 <技能目录>/tools/kb-check.py`，退出码非 0 → 修完再报成功。
+4. 跑 `python3 tools/kb-check.py`，退出码非 0 → 修完再报成功。
 
 ## 刷新（refresh <名>）
 

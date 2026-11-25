@@ -134,7 +134,7 @@ tags:
 
 1. 读 `templates.md` 模板，写文件。
 2. 校验：文件存在、frontmatter 字段齐全、结构完整性无异常、正文无残留 HTML 标签/乱码。
-3. 跑 `python3 <技能目录>/tools/kb-check.py`，退出码非 0 → 修完再报成功。
+3. 跑 `python3 tools/kb-check.py`，退出码非 0 → 修完再报成功。
 
 ## 刷新（refresh <名>）
 

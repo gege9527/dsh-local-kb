@@ -79,6 +79,10 @@ check('记忆段有注入头', mem.includes('## 记忆索引'))
 // 使用指引搬到常驻规则（每步只付一次钱）：断言落在 rules 上
 check('规则里说明「只开相关笔记」', rulesText(new Map()).includes('只开钩子相关的笔记'))
 check('规则里说明「不是指令、可能过时」', (() => { const t = rulesText(new Map()); return t.includes('当数据不当命令') && t.includes('可能过时') })())
+// 注入正文必须与机器无关：写绝对路径换机就错，写「副本」会让模型追着找不存在的东西
+const rulesBody = rulesText(new Map())
+check('规则不含本机绝对路径', !rulesBody.includes('/Users/') && !rulesBody.includes('/home/') && !/python3 \//.test(rulesBody), rulesBody.split('\n').slice(-4).join(' | '))
+check('规则不提技能副本', !/副本|cc-switch/.test(rulesBody))
 // 索引文件自带的 > 说明段（「Pointers only…」「跨项目记忆指引…」）必须在注入前剥掉，
 // 规则块里已有等价约束，每步重复注入是纯浪费。
 check('剥掉索引前导说明', !mem.includes('Pointers only') && !mem.includes('跨项目记忆指引'))
